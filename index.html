@@ -943,12 +943,13 @@ tbody tr:hover{background:var(--cream-dim);}
     <div class="sub">Human Resources Information System</div>
   </div>
   <div class="landing-cards" style="justify-content:center;">
-    <div class="landing-card" style="max-width:420px;">
+    <div class="landing-card">
       <div class="landing-tab">HR / ADMIN</div>
       <h3>HR & Admin Portal</h3>
       <p>Manage employees, leave approvals, evaluations, violations, and 201 files.</p>
       <button class="btn btn-primary" id="goAdminBtn" style="width:100%;justify-content:center;">Admin Login →</button>
     </div>
+
   </div>
 </div>
 
@@ -1086,6 +1087,7 @@ function getOthersValue(id){
 }
 const S = { // app state
   view: 'config',
+  defaultView: 'landing',
   page: 'dashboard',
   empPage: 'overview',
   admin: null,
@@ -1107,28 +1109,48 @@ const S = { // app state
 };
 
 /* ==================== INIT ==================== */
-window.addEventListener('DOMContentLoaded', () => {
-  const saved = loadCfg();
-  // Baked credentials take priority over saved
-  if (BAKED_URL && BAKED_KEY) {
-    document.getElementById('cfg_url').value = BAKED_URL;
-    document.getElementById('cfg_key').value = BAKED_KEY;
-  } else if (saved) {
-    document.getElementById('cfg_url').value = saved.url || '';
-    document.getElementById('cfg_key').value = saved.key || '';
-  }
-
-  document.getElementById('cfgConnectBtn').addEventListener('click', connectDb);
-  document.getElementById('cfg_key').addEventListener('keydown', e => { if (e.key === 'Enter') connectDb(); });
-  document.getElementById('goAdminBtn').addEventListener('click', () => { S.view = 'admin-login'; render(); });
-  document.getElementById('goEmpBtn').addEventListener('click', () => { S.view = 'emp-login'; render(); });
+window.addEventListener('DOMContentLoaded', async () => {
+  // Wire always-present elements
   document.getElementById('backdrop').addEventListener('click', closeSidebar);
-  document.getElementById('sidebarClose').addEventListener('click', closeSidebar);
-  document.getElementById('menuBtn').addEventListener('click', openSidebar);
-  document.getElementById('logoutBtn').addEventListener('click', () => { S.admin = null; clearSession(); stopRealtime(); S.view = 'landing'; render(); });
+  document.getElementById('sidebarClose')?.addEventListener('click', closeSidebar);
+  document.getElementById('menuBtn')?.addEventListener('click', openSidebar);
+  document.getElementById('logoutBtn')?.addEventListener('click', () => { S.admin = null; clearSession(); S.view = 'landing'; render(); });
   document.getElementById('modalOverlay').addEventListener('click', e => { if (e.target === document.getElementById('modalOverlay')) closeModal(); });
 
-  if (BAKED_URL && BAKED_KEY) { connectDb(true); } else if (saved) { connectDb(true); }
+  // Wire config screen if present (for portals without baked credentials)
+  document.getElementById('cfgConnectBtn')?.addEventListener('click', connectDb);
+  document.getElementById('cfg_key')?.addEventListener('keydown', e => { if (e.key === 'Enter') connectDb(); });
+
+  if (BAKED_URL && BAKED_KEY && BAKED_URL !== 'SUPABASE_URL_DITO') {
+    // Auto-connect using baked credentials
+    try {
+      sb = supabase.createClient(BAKED_URL, BAKED_KEY);
+      await loadCompanySettings();
+      startRealtime();
+      const sess = loadSession();
+      if (sess && sess.admin) {
+        S.admin = sess.admin; S.view = 'admin'; S.page = sess.page || 'dashboard';
+      } else if (sess && sess.employee) {
+        S.employee = sess.employee; S.view = 'employee'; S.empPage = sess.empPage || 'overview';
+      } else {
+        S.view = S.defaultView || 'landing';
+      }
+    } catch(err) {
+      console.error('Auto-connect failed:', err);
+      S.view = S.defaultView || 'landing';
+    }
+  } else {
+    // Show config screen
+    const saved = loadCfg();
+    if (saved) {
+      document.getElementById('cfg_url').value = saved.url || '';
+      document.getElementById('cfg_key').value = saved.key || '';
+      connectDb(true);
+      return;
+    }
+    S.view = 'config';
+  }
+  render();
 });
 
 function loadCfg() { try { const r = localStorage.getItem(CFG_KEY); return r ? JSON.parse(r) : null; } catch(e) { return null; } }
@@ -1235,13 +1257,19 @@ function render() {
   ['configScreen','landingScreen','adminLoginScreen','empLoginScreen','empShell','adminShell']
     .forEach(id => { const el = document.getElementById(id); if (el) el.style.display = 'none'; });
 
-  if (S.view === 'landing')          { renderLanding(); show('landingScreen', 'flex'); setTimeout(()=>{ document.getElementById('goAdminBtn')?.addEventListener('click',()=>{S.view='admin-login';render();}); },50); }
+  if (S.view === 'config')       { show('configScreen', 'flex'); }
+  else if (S.view === 'landing') {
+    renderLanding(); show('landingScreen', 'flex');
+    setTimeout(() => {
+      document.getElementById('goAdminBtn')?.addEventListener('click', () => { S.view = 'admin-login'; render(); });
+      document.getElementById('goEmpBtn')?.addEventListener('click', () => { S.view = 'emp-login'; render(); });
+    }, 50);
+  }
   else if (S.view === 'admin-login') { renderAdminLogin(); show('adminLoginScreen', 'flex'); }
   else if (S.view === 'emp-login')   { renderEmpLogin(); show('empLoginScreen', 'flex'); }
   else if (S.view === 'force-pin')   { renderForcePin(); show('empLoginScreen', 'flex'); }
   else if (S.view === 'employee')    { show('empShell', 'flex'); renderEmpShell(); }
   else if (S.view === 'admin')       { show('adminShell', 'flex'); renderAdminShell(); }
-  else                               { renderLanding(); show('landingScreen', 'flex'); }
 }
 
 function show(id, d = 'block') { const el = document.getElementById(id); if (el) el.style.display = d; }
@@ -1390,6 +1418,11 @@ function renderAdminLogin() {
 /* ==================== EMPLOYEE LOGIN ==================== */
 function renderEmpLogin() {
   document.getElementById('empLoginScreen').innerHTML = `
+    <div class="landing-brand" style="margin-bottom:24px;">
+      ${S.logo ? `<img src="${S.logo}" style="height:72px;object-fit:contain;margin-bottom:14px;filter:drop-shadow(0 4px 12px rgba(0,0,0,0.4));">` : ''}
+      <div class="mark">${S.company ? `${S.company} <small>HRIS</small>` : `Ledger <small>HRIS</small>`}</div>
+      <div class="sub">Human Resources Information System</div>
+    </div>
     <div class="login-card">
       <div class="login-tab">EMPLOYEE SELF-SERVICE</div>
       <h2>Employee Login</h2>
@@ -1398,9 +1431,7 @@ function renderEmpLogin() {
       <div class="field"><label>PIN</label><input type="password" id="el_pin" placeholder="Your PIN" maxlength="8"></div>
       ${S.empLoginError ? `<div class="login-error">${S.empLoginError}</div>` : ''}
       <button class="btn btn-primary" id="doEmpLoginBtn" style="width:100%;justify-content:center;">Login</button>
-      <button class="btn btn-outline" id="backEmpBtn" style="width:100%;justify-content:center;margin-top:8px;">Back</button>
     </div>`;
-  document.getElementById('backEmpBtn').addEventListener('click', () => { S.view='landing'; render(); });
   const doLogin = async () => {
     const empId = document.getElementById('el_id').value.trim().toUpperCase();
     const pin = document.getElementById('el_pin').value;

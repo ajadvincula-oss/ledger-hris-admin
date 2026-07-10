@@ -942,18 +942,12 @@ tbody tr:hover{background:var(--cream-dim);}
     <div class="mark" id="landingMark">Ledger <small>HRIS</small></div>
     <div class="sub">Human Resources Information System</div>
   </div>
-  <div class="landing-cards">
-    <div class="landing-card">
+  <div class="landing-cards" style="justify-content:center;">
+    <div class="landing-card" style="max-width:420px;">
       <div class="landing-tab">HR / ADMIN</div>
       <h3>HR & Admin Portal</h3>
       <p>Manage employees, leave approvals, evaluations, violations, and 201 files.</p>
       <button class="btn btn-primary" id="goAdminBtn" style="width:100%;justify-content:center;">Admin Login →</button>
-    </div>
-    <div class="landing-card">
-      <div class="landing-tab">EMPLOYEE</div>
-      <h3>Employee Self-Service</h3>
-      <p>View your profile, file leave requests, track evaluations and documents.</p>
-      <button class="btn btn-primary" id="goEmpBtn" style="width:100%;justify-content:center;">Employee Login →</button>
     </div>
   </div>
 </div>
@@ -1241,7 +1235,7 @@ function render() {
   ['configScreen','landingScreen','adminLoginScreen','empLoginScreen','empShell','adminShell']
     .forEach(id => { const el = document.getElementById(id); if (el) el.style.display = 'none'; });
 
-  if (S.view === 'landing')          { renderLanding(); show('landingScreen', 'flex'); }
+  if (S.view === 'landing')          { renderLanding(); show('landingScreen', 'flex'); setTimeout(()=>{ document.getElementById('goAdminBtn')?.addEventListener('click',()=>{S.view='admin-login';render();}); },50); }
   else if (S.view === 'admin-login') { renderAdminLogin(); show('adminLoginScreen', 'flex'); }
   else if (S.view === 'emp-login')   { renderEmpLogin(); show('empLoginScreen', 'flex'); }
   else if (S.view === 'force-pin')   { renderForcePin(); show('empLoginScreen', 'flex'); }

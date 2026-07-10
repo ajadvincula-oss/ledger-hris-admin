@@ -1,91 +1,3 @@
-{
-  "name": "Ledger HRIS — Employee Portal",
-  "short_name": "Ledger HRIS",
-  "description": "Premierlabs Corporation — Employee Self-Service Portal",
-  "start_url": "./",
-  "scope": "./",
-  "display": "standalone",
-  "orientation": "portrait",
-  "background_color": "#0A4F8C",
-  "theme_color": "#0A4F8C",
-  "lang": "en",
-  "icons": [
-    {
-      "src": "icon-192.png",
-      "sizes": "192x192",
-      "type": "image/png",
-      "purpose": "any maskable"
-    },
-    {
-      "src": "icon-512.png",
-      "sizes": "512x512",
-      "type": "image/png",
-      "purpose": "any maskable"
-    }
-  ],
-  "screenshots": [
-    {
-      "label": "Employee Login",
-      "form_factor": "narrow"
-    }
-  ]
-}
-
-// Ledger HRIS — Service Worker
-// Caches the app shell for offline/fast loading
-
-const CACHE_NAME = 'ledger-hris-v2';
-const ASSETS_TO_CACHE = [
-  './',
-  './index.html',
-  'https://fonts.googleapis.com/css2?family=Fraunces:opsz,wght@9..144,300;9..144,400;9..144,600;9..144,700&family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap',
-  'https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2',
-  'https://cdnjs.cloudflare.com/ajax/libs/Chart.js/4.4.1/chart.umd.min.js'
-];
-
-// Install — cache app shell
-self.addEventListener('install', event => {
-  self.skipWaiting();
-  event.waitUntil(
-    caches.open(CACHE_NAME).then(cache => {
-      return cache.addAll(ASSETS_TO_CACHE).catch(() => {});
-    })
-  );
-});
-
-// Activate — clean old caches
-self.addEventListener('activate', event => {
-  event.waitUntil(
-    caches.keys().then(keys =>
-      Promise.all(keys.filter(k => k !== CACHE_NAME).map(k => caches.delete(k)))
-    ).then(() => self.clients.claim())
-  );
-});
-
-// Fetch — serve from cache, fallback to network
-self.addEventListener('fetch', event => {
-  // Never cache Supabase API calls — always live
-  if (event.request.url.includes('supabase.co')) {
-    return;
-  }
-
-  // For everything else: cache-first strategy
-  event.respondWith(
-    caches.open(CACHE_NAME).then(cache =>
-      cache.match(event.request).then(cached => {
-        if (cached) return cached;
-        return fetch(event.request).then(response => {
-          // Cache successful GET requests
-          if (response.ok && event.request.method === 'GET') {
-            cache.put(event.request, response.clone());
-          }
-          return response;
-        }).catch(() => cached); // fallback to cache if offline
-      })
-    )
-  );
-});
-
 <!DOCTYPE html>
 <html lang="en">
 <head>
@@ -4324,7 +4236,94 @@ async function renderEmpLeave(content, emp) {
           <div style="display:flex;gap:6px;flex-shrink:0;">
             <button class="btn btn-primary btn-sm sup-approve-cancel-btn" data-id="${l.id}" style="font-size:11px;background:var(--rose);border-color:var(--rose);">✓ Approve → HR</button>
             <button class="btn btn-outline btn-sm sup-deny-cancel-btn" data-id="${l.id}" style="font-size:11px;">✕ Reject</button>
-          </div>
+          </div>{
+  "name": "Ledger HRIS — Employee Portal",
+  "short_name": "Ledger HRIS",
+  "description": "Premierlabs Corporation — Employee Self-Service Portal",
+  "start_url": "./",
+  "scope": "./",
+  "display": "standalone",
+  "orientation": "portrait",
+  "background_color": "#0A4F8C",
+  "theme_color": "#0A4F8C",
+  "lang": "en",
+  "icons": [
+    {
+      "src": "icon-192.png",
+      "sizes": "192x192",
+      "type": "image/png",
+      "purpose": "any maskable"
+    },
+    {
+      "src": "icon-512.png",
+      "sizes": "512x512",
+      "type": "image/png",
+      "purpose": "any maskable"
+    }
+  ],
+  "screenshots": [
+    {
+      "label": "Employee Login",
+      "form_factor": "narrow"
+    }
+  ]
+}
+
+// Ledger HRIS — Service Worker
+// Caches the app shell for offline/fast loading
+
+const CACHE_NAME = 'ledger-hris-v2';
+const ASSETS_TO_CACHE = [
+  './',
+  './index.html',
+  'https://fonts.googleapis.com/css2?family=Fraunces:opsz,wght@9..144,300;9..144,400;9..144,600;9..144,700&family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap',
+  'https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2',
+  'https://cdnjs.cloudflare.com/ajax/libs/Chart.js/4.4.1/chart.umd.min.js'
+];
+
+// Install — cache app shell
+self.addEventListener('install', event => {
+  self.skipWaiting();
+  event.waitUntil(
+    caches.open(CACHE_NAME).then(cache => {
+      return cache.addAll(ASSETS_TO_CACHE).catch(() => {});
+    })
+  );
+});
+
+// Activate — clean old caches
+self.addEventListener('activate', event => {
+  event.waitUntil(
+    caches.keys().then(keys =>
+      Promise.all(keys.filter(k => k !== CACHE_NAME).map(k => caches.delete(k)))
+    ).then(() => self.clients.claim())
+  );
+});
+
+// Fetch — serve from cache, fallback to network
+self.addEventListener('fetch', event => {
+  // Never cache Supabase API calls — always live
+  if (event.request.url.includes('supabase.co')) {
+    return;
+  }
+
+  // For everything else: cache-first strategy
+  event.respondWith(
+    caches.open(CACHE_NAME).then(cache =>
+      cache.match(event.request).then(cached => {
+        if (cached) return cached;
+        return fetch(event.request).then(response => {
+          // Cache successful GET requests
+          if (response.ok && event.request.method === 'GET') {
+            cache.put(event.request, response.clone());
+          }
+          return response;
+        }).catch(() => cached); // fallback to cache if offline
+      })
+    )
+  );
+});
+
         </div>`).join('')}
       <div style="font-size:11px;color:var(--muted);margin-top:10px;">Approving forwards to HR for final cancellation. Rejecting keeps the leave as Approved.</div>
     </div>` : ''}
@@ -4783,3 +4782,91 @@ if ('serviceWorker' in navigator) {
 </script>
 </body>
 </html>
+
+{
+  "name": "Ledger HRIS — Employee Portal",
+  "short_name": "Ledger HRIS",
+  "description": "Premierlabs Corporation — Employee Self-Service Portal",
+  "start_url": "./",
+  "scope": "./",
+  "display": "standalone",
+  "orientation": "portrait",
+  "background_color": "#0A4F8C",
+  "theme_color": "#0A4F8C",
+  "lang": "en",
+  "icons": [
+    {
+      "src": "icon-192.png",
+      "sizes": "192x192",
+      "type": "image/png",
+      "purpose": "any maskable"
+    },
+    {
+      "src": "icon-512.png",
+      "sizes": "512x512",
+      "type": "image/png",
+      "purpose": "any maskable"
+    }
+  ],
+  "screenshots": [
+    {
+      "label": "Employee Login",
+      "form_factor": "narrow"
+    }
+  ]
+}
+
+// Ledger HRIS — Service Worker
+// Caches the app shell for offline/fast loading
+
+const CACHE_NAME = 'ledger-hris-v2';
+const ASSETS_TO_CACHE = [
+  './',
+  './index.html',
+  'https://fonts.googleapis.com/css2?family=Fraunces:opsz,wght@9..144,300;9..144,400;9..144,600;9..144,700&family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap',
+  'https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2',
+  'https://cdnjs.cloudflare.com/ajax/libs/Chart.js/4.4.1/chart.umd.min.js'
+];
+
+// Install — cache app shell
+self.addEventListener('install', event => {
+  self.skipWaiting();
+  event.waitUntil(
+    caches.open(CACHE_NAME).then(cache => {
+      return cache.addAll(ASSETS_TO_CACHE).catch(() => {});
+    })
+  );
+});
+
+// Activate — clean old caches
+self.addEventListener('activate', event => {
+  event.waitUntil(
+    caches.keys().then(keys =>
+      Promise.all(keys.filter(k => k !== CACHE_NAME).map(k => caches.delete(k)))
+    ).then(() => self.clients.claim())
+  );
+});
+
+// Fetch — serve from cache, fallback to network
+self.addEventListener('fetch', event => {
+  // Never cache Supabase API calls — always live
+  if (event.request.url.includes('supabase.co')) {
+    return;
+  }
+
+  // For everything else: cache-first strategy
+  event.respondWith(
+    caches.open(CACHE_NAME).then(cache =>
+      cache.match(event.request).then(cached => {
+        if (cached) return cached;
+        return fetch(event.request).then(response => {
+          // Cache successful GET requests
+          if (response.ok && event.request.method === 'GET') {
+            cache.put(event.request, response.clone());
+          }
+          return response;
+        }).catch(() => cached); // fallback to cache if offline
+      })
+    )
+  );
+});

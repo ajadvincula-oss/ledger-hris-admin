@@ -805,6 +805,33 @@ tbody tr:hover{background:var(--cream-dim);}
   flex-direction:column;
   position:sticky;top:0;height:100vh;
   border-right:1px solid rgba(255,255,255,0.06);
+  z-index:50;
+  transition:transform 0.3s cubic-bezier(.4,0,.2,1);
+}
+.emp-menu-btn{
+  display:none;
+  background:none;border:1px solid var(--line-strong);border-radius:var(--radius-sm);
+  width:36px;height:36px;align-items:center;justify-content:center;color:var(--navy);
+  font-size:16px;flex-shrink:0;
+}
+.emp-menu-btn:hover{background:var(--cream-dim);}
+.emp-sidebar-close{display:none;}
+@media (max-width:768px){
+  .emp-sidebar{
+    position:fixed;left:0;top:0;
+    transform:translateX(-100%);
+    box-shadow:6px 0 30px rgba(0,0,0,0.25);
+  }
+  .emp-sidebar.open{transform:translateX(0);}
+  .emp-sidebar-close{
+    display:flex;position:absolute;top:18px;right:14px;
+    background:rgba(255,255,255,0.1);border:none;border-radius:50%;
+    color:#fff;font-size:16px;width:30px;height:30px;
+    align-items:center;justify-content:center;z-index:2;
+  }
+  .emp-menu-btn{display:flex;}
+  .emp-backdrop{display:none;position:fixed;inset:0;background:rgba(0,0,0,0.45);z-index:45;}
+  .emp-backdrop.open{display:block;}
 }
 .emp-brand{padding:22px 20px 16px;border-bottom:1px solid rgba(255,255,255,0.08);}
 .emp-brand .mark{font-family:'Fraunces',serif;font-size:20px;font-weight:600;color:#fff;letter-spacing:-0.03em;}
@@ -920,7 +947,7 @@ tbody tr:hover{background:var(--cream-dim);}
   .toolbar { flex-wrap: wrap; gap: 8px; }
   .modal-overlay .modal { width: 95vw !important; max-width: 95vw !important; max-height: 90vh; overflow-y: auto; }
   .topbar h2 { font-size: 15px !important; }
-  .emp-sidebar { width: 220px !important; }
+  .emp-sidebar { width: 260px !important; max-width: 82vw; }
   .btn { font-size: 13px !important; }
 }
 @media (max-width: 480px) {
@@ -4093,7 +4120,9 @@ async function renderEmpShell() {
 
   const shell=document.getElementById('empShell');
   shell.innerHTML=`
-    <div class="emp-sidebar">
+    <div class="emp-backdrop" id="empBackdrop"></div>
+    <div class="emp-sidebar" id="empSidebar">
+      <button class="emp-sidebar-close" id="empSidebarClose">✕</button>
       <div class="emp-brand"><div class="mark">${S.company||'Ledger'} <small>SELF-SERVICE</small></div></div>
       <div class="emp-user">
         ${avatarEl(emp,44)}
@@ -4108,10 +4137,22 @@ async function renderEmpShell() {
       <div class="sidebar-foot"><button class="btn btn-outline btn-sm" id="empLogout" style="width:100%;justify-content:center;">&larr; Logout</button></div>
     </div>
     <div class="main">
-      <div class="topbar"><div class="topbar-title"><div><div class="breadcrumb">SELF-SERVICE</div><h2 id="empPageTitle">${EMP_NAV.find(n=>n.key===S.empPage)?.label||'My Profile'}</h2></div></div></div>
+      <div class="topbar">
+        <div class="topbar-title">
+          <button class="emp-menu-btn" id="empMenuBtn">☰</button>
+          <div><div class="breadcrumb">SELF-SERVICE</div><h2 id="empPageTitle">${EMP_NAV.find(n=>n.key===S.empPage)?.label||'My Profile'}</h2></div>
+        </div>
+      </div>
       <div class="content" id="empContent"></div>
     </div>`;
-  shell.querySelectorAll('.nav-tab').forEach(btn=>btn.addEventListener('click',()=>{S.empPage=btn.dataset.page;renderEmpShell();}));
+  const empSidebarEl = document.getElementById('empSidebar');
+  const empBackdropEl = document.getElementById('empBackdrop');
+  const openEmpSidebar = () => { empSidebarEl.classList.add('open'); empBackdropEl.classList.add('open'); };
+  const closeEmpSidebar = () => { empSidebarEl.classList.remove('open'); empBackdropEl.classList.remove('open'); };
+  document.getElementById('empMenuBtn')?.addEventListener('click', openEmpSidebar);
+  document.getElementById('empSidebarClose')?.addEventListener('click', closeEmpSidebar);
+  empBackdropEl.addEventListener('click', closeEmpSidebar);
+  shell.querySelectorAll('.nav-tab').forEach(btn=>btn.addEventListener('click',()=>{S.empPage=btn.dataset.page;closeEmpSidebar();renderEmpShell();}));
   document.getElementById('empLogout').addEventListener('click',()=>{
     S.employee=null; S._notifShown=false; clearSession(); stopRealtime(); S.view='landing'; render();
   });
@@ -4609,91 +4650,3 @@ if ('serviceWorker' in navigator) {
 </script>
 </body>
 </html>
-
-{
-  "name": "Ledger HRIS — Employee Portal",
-  "short_name": "Ledger HRIS",
-  "description": "Premierlabs Corporation — Employee Self-Service Portal",
-  "start_url": "./",
-  "scope": "./",
-  "display": "standalone",
-  "orientation": "portrait",
-  "background_color": "#0A4F8C",
-  "theme_color": "#0A4F8C",
-  "lang": "en",
-  "icons": [
-    {
-      "src": "icon-192.png",
-      "sizes": "192x192",
-      "type": "image/png",
-      "purpose": "any maskable"
-    },
-    {
-      "src": "icon-512.png",
-      "sizes": "512x512",
-      "type": "image/png",
-      "purpose": "any maskable"
-    }
-  ],
-  "screenshots": [
-    {
-      "label": "Employee Login",
-      "form_factor": "narrow"
-    }
-  ]
-}
-
-// Ledger HRIS — Service Worker
-// Caches the app shell for offline/fast loading
-
-const CACHE_NAME = 'ledger-hris-v2';
-const ASSETS_TO_CACHE = [
-  './',
-  './index.html',
-  'https://fonts.googleapis.com/css2?family=Fraunces:opsz,wght@9..144,300;9..144,400;9..144,600;9..144,700&family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap',
-  'https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2',
-  'https://cdnjs.cloudflare.com/ajax/libs/Chart.js/4.4.1/chart.umd.min.js'
-];
-
-// Install — cache app shell
-self.addEventListener('install', event => {
-  self.skipWaiting();
-  event.waitUntil(
-    caches.open(CACHE_NAME).then(cache => {
-      return cache.addAll(ASSETS_TO_CACHE).catch(() => {});
-    })
-  );
-});
-
-// Activate — clean old caches
-self.addEventListener('activate', event => {
-  event.waitUntil(
-    caches.keys().then(keys =>
-      Promise.all(keys.filter(k => k !== CACHE_NAME).map(k => caches.delete(k)))
-    ).then(() => self.clients.claim())
-  );
-});
-
-// Fetch — serve from cache, fallback to network
-self.addEventListener('fetch', event => {
-  // Never cache Supabase API calls — always live
-  if (event.request.url.includes('supabase.co')) {
-    return;
-  }
-
-  // For everything else: cache-first strategy
-  event.respondWith(
-    caches.open(CACHE_NAME).then(cache =>
-      cache.match(event.request).then(cached => {
-        if (cached) return cached;
-        return fetch(event.request).then(response => {
-          // Cache successful GET requests
-          if (response.ok && event.request.method === 'GET') {
-            cache.put(event.request, response.clone());
-          }
-          return response;
-        }).catch(() => cached); // fallback to cache if offline
-      })
-    )
-  );
-});

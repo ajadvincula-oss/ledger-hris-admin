@@ -2416,9 +2416,7 @@ async function openEmpForm(empId, content) {
       <div class="field"><label>TIN</label><input type="text" id="f_tin" value="${emp?.tin_number||''}" placeholder="e.g. 123-456-789-000"></div>
       <div class="section-label" style="grid-column:1/-1;margin:4px 0 0;font-size:11px;">EMERGENCY CONTACT</div>
       <div class="field"><label>Contact Person Name</label><input type="text" id="f_emerg_name" value="${emp?.emergency_contact_name||''}" placeholder="e.g. Maria Santos"></div>
-      <div class="field"><label>Relationship</label><select id="f_emerg_rel">
-        ${['Mother','Father','Spouse','Sibling','Child','Relative','Friend','Other'].map(r=>`<option ${emp?.emergency_contact_relation===r?'selected':''}>${r}</option>`).join('')}
-      </select></div>
+      <div class="field"><label>Relationship</label>${withOthers('f_emerg_rel', ['Mother','Father','Spouse','Sibling','Child','Relative','Friend'], emp?.emergency_contact_relation||'')}</div>
       <div class="field field-full"><label>Contact Number</label><input type="text" id="f_emerg_phone" value="${emp?.emergency_contact_phone||''}" placeholder="09xxxxxxxxx"></div>
       ${!emp?`<div class="field"><label>Initial PIN</label><input type="text" id="f_pin" value="1234" maxlength="8"></div>`:''}
     </div></div>
@@ -2428,6 +2426,7 @@ async function openEmpForm(empId, content) {
   document.getElementById('cancelEmpBtn').addEventListener('click',closeModal);
   wireOthers('f_dept');
   wireOthers('f_jobstatus');
+  wireOthers('f_emerg_rel');
 
   // Real-time duplicate ID check on input
   if(!emp){
@@ -2478,7 +2477,7 @@ async function openEmpForm(empId, content) {
       pagibig_number:document.getElementById('f_pagibig').value.trim()||null,
       tin_number:document.getElementById('f_tin').value.trim()||null,
       emergency_contact_name:document.getElementById('f_emerg_name').value.trim()||null,
-      emergency_contact_relation:document.getElementById('f_emerg_rel').value||null,
+      emergency_contact_relation:getOthersValue('f_emerg_rel')||null,
       emergency_contact_phone:document.getElementById('f_emerg_phone').value.trim()||null,
       updated_at:new Date().toISOString()};
     if(!emp) { payload.pin=document.getElementById('f_pin')?.value||'1234'; payload.must_change_pin=false; }

@@ -3243,15 +3243,21 @@ async function openDocChecklist(empId, empName) {
               </select>
             </td>
             <td style="padding:10px 4px;text-align:center;">
-              ${d.file_data
+              ${d.file_data || (d.file_name && d.file_name.startsWith('gdrive:'))
                 ? `<div style="display:flex;gap:4px;justify-content:center;">
-                    <button class="btn btn-outline btn-sm dl-doc-btn" data-id="${d.id}" data-name="${d.file_name||'document'}" style="font-size:11px;padding:4px 8px;">⬇ ${(d.file_name||'file').slice(0,10)}</button>
+                    ${d.file_name && d.file_name.startsWith('gdrive:')
+                      ? `<a href="${d.file_name.replace('gdrive:','')}" target="_blank" class="btn btn-outline btn-sm" style="font-size:11px;padding:4px 8px;">🔗 Drive</a>`
+                      : `<button class="btn btn-outline btn-sm dl-doc-btn" data-id="${d.id}" data-name="${d.file_name||'document'}" style="font-size:11px;padding:4px 8px;">⬇ ${(d.file_name||'file').slice(0,10)}</button>`
+                    }
                     <button class="btn btn-danger btn-sm rm-doc-btn" data-id="${d.id}" style="font-size:11px;padding:4px 8px;">✕</button>
                   </div>`
-                : `<label style="cursor:pointer;display:inline-flex;align-items:center;gap:4px;padding:4px 8px;border:1px dashed var(--line-strong);border-radius:var(--radius);font-size:11px;color:var(--muted);">
-                    📎 Attach
-                    <input type="file" class="doc-file-input" data-id="${d.id}" style="display:none;" accept=".pdf,.jpg,.jpeg,.png,.doc,.docx,.xlsx,.xls">
-                  </label>`
+                : `<div style="display:flex;gap:4px;justify-content:center;">
+                    <label style="cursor:pointer;display:inline-flex;align-items:center;gap:4px;padding:4px 8px;border:1px dashed var(--line-strong);border-radius:var(--radius);font-size:11px;color:var(--muted);">
+                      📎 Attach
+                      <input type="file" class="doc-file-input" data-id="${d.id}" style="display:none;" accept=".pdf,.jpg,.jpeg,.png,.doc,.docx,.xlsx,.xls">
+                    </label>
+                    <button class="btn btn-outline btn-sm doc-drive-btn" data-id="${d.id}" style="font-size:11px;padding:4px 8px;">🔗 Drive Link</button>
+                  </div>`
               }
             </td>
           </tr>`).join('')}
@@ -3279,6 +3285,17 @@ async function openDocChecklist(empId, empName) {
         openDocChecklist(empId, empName); // refresh
       };
       reader.readAsDataURL(file);
+    });
+  });
+
+  // Handle Google Drive link attach
+  document.querySelectorAll('.doc-drive-btn').forEach(btn=>{
+    btn.addEventListener('click', async()=>{
+      const url = prompt('Paste the Google Drive shareable link:\n(Make sure it\'s set to "Anyone with the link can view")');
+      if(!url || !url.trim()) return;
+      await sb.from('documents').update({file_data:null, file_name:'gdrive:'+url.trim(), status:'Submitted', updated_at:new Date().toISOString()}).eq('id',btn.dataset.id);
+      toast('Google Drive link attached.');
+      openDocChecklist(empId, empName);
     });
   });
 

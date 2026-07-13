@@ -1957,7 +1957,7 @@ async function refreshEHTable(content) {
   if (!tbody) { renderEmpHistory(content); return; }
   tbody.innerHTML = list.length===0
     ? `<tr><td colspan="9"><div class="empty-state"><h4>No records found</h4></div></td></tr>`
-    : list.map(r=>`<tr>
+    : list.map(r=>`<tr data-id="${r.id}" style="cursor:pointer;">
         <td class="mono">${r.emp_id}</td><td><strong>${r.emp_name||'—'}</strong></td>
         <td class="mono">${fmtDate(r.effective_date)}</td><td><span class="badge badge-active">${r.movement_type||'—'}</span></td>
         <td style="color:var(--muted);">${r.previous_details||'—'}</td><td><strong>${r.new_details||'—'}</strong></td>
@@ -1967,8 +1967,9 @@ async function refreshEHTable(content) {
           <button class="btn btn-danger btn-sm del-eh-btn" data-id="${r.id}">Delete</button>
         </td>
       </tr>`).join('');
-  tbody.querySelectorAll('.edit-eh-btn').forEach(btn=>btn.addEventListener('click',()=>openEHForm(btn.dataset.id,content)));
-  tbody.querySelectorAll('.del-eh-btn').forEach(btn=>btn.addEventListener('click',async()=>{ await sb.from('employment_history').delete().eq('id',btn.dataset.id); toast('Record deleted.'); renderEmpHistory(content); }));
+  tbody.querySelectorAll('.edit-eh-btn').forEach(btn=>btn.addEventListener('click',e=>{e.stopPropagation();openEHForm(btn.dataset.id,content);}));
+  tbody.querySelectorAll('.del-eh-btn').forEach(btn=>btn.addEventListener('click',async e=>{ e.stopPropagation(); await sb.from('employment_history').delete().eq('id',btn.dataset.id); toast('Record deleted.'); renderEmpHistory(content); }));
+  tbody.querySelectorAll('tr[data-id]').forEach(row=>row.addEventListener('click',()=>openEHForm(row.dataset.id,content)));
 }
 
 function leaveStatusBadge(s){
@@ -2993,12 +2994,12 @@ async function renderEvaluation(content) {
     ${list.length===0?`<div class="empty-state"><h4>No evaluations yet</h4><p>Add the first performance evaluation.</p></div>`:`
     <div class="table-wrap"><table>
       <thead><tr><th>Employee</th><th>Period</th><th>Att.</th><th>Quality</th><th>Teamwork</th><th>Initiative</th><th>Rating</th><th></th></tr></thead>
-      <tbody>${list.map(e=>`<tr>
+      <tbody>${list.map(e=>`<tr data-id="${e.id}" style="cursor:pointer;">
         <td><strong>${e.emp_name}</strong><br><span class="mono" style="font-size:11px;color:var(--muted);">${e.emp_id}</span></td>
         <td>${e.period||'—'}</td><td>${e.attendance||'—'}</td><td>${e.quality||'—'}</td><td>${e.teamwork||'—'}</td><td>${e.initiative||'—'}</td>
         <td><strong>${e.rating||'—'}</strong></td>
         <td style="white-space:nowrap;">
-          ${e.file_name?(e.file_name.startsWith('gdrive:')?`<a href="${e.file_name.replace('gdrive:','')}" target="_blank" class="btn btn-outline btn-sm" style="font-size:11px;">🔗 Drive</a> `:`<button class="btn btn-outline btn-sm dl-eval-btn" data-id="${e.id}" style="font-size:11px;">⬇ ${(e.file_name||'').slice(0,12)}</button> `):''}
+          ${e.file_name?(e.file_name.startsWith('gdrive:')?`<a href="${e.file_name.replace('gdrive:','')}" target="_blank" class="btn btn-outline btn-sm" style="font-size:11px;" onclick="event.stopPropagation()">🔗 Drive</a> `:`<button class="btn btn-outline btn-sm dl-eval-btn" data-id="${e.id}" style="font-size:11px;">⬇ ${(e.file_name||'').slice(0,12)}</button> `):''}
           <button class="btn btn-outline btn-sm edit-eval-btn" data-id="${e.id}">Edit</button>
           <button class="btn btn-danger btn-sm del-eval-btn" data-id="${e.id}">Delete</button>
         </td>
@@ -3030,14 +3031,16 @@ async function renderEvaluation(content) {
       }
     });
   });
-  content.querySelectorAll('.edit-eval-btn').forEach(btn=>btn.addEventListener('click',()=>openEvalForm(btn.dataset.id,content)));
-  content.querySelectorAll('.del-eval-btn').forEach(btn=>btn.addEventListener('click',async()=>{ await sb.from('evaluations').delete().eq('id',btn.dataset.id); toast('Evaluation deleted.'); renderEvaluation(content); }));
-  content.querySelectorAll('.dl-eval-btn').forEach(btn=>btn.addEventListener('click',async()=>{
-    const {data:e}=await sb.from('evaluations').select('file_data,file_name').eq('id',btn.dataset.id).single();
-    if(!e?.file_data) return;
-    const a=document.createElement('a'); a.href=e.file_data; a.download=e.file_name||'evaluation_file';
+  content.querySelectorAll('.edit-eval-btn').forEach(btn=>btn.addEventListener('click',e=>{e.stopPropagation();openEvalForm(btn.dataset.id,content);}));
+  content.querySelectorAll('.del-eval-btn').forEach(btn=>btn.addEventListener('click',async e=>{ e.stopPropagation(); await sb.from('evaluations').delete().eq('id',btn.dataset.id); toast('Evaluation deleted.'); renderEvaluation(content); }));
+  content.querySelectorAll('.dl-eval-btn').forEach(btn=>btn.addEventListener('click',async e=>{
+    e.stopPropagation();
+    const {data:e2}=await sb.from('evaluations').select('file_data,file_name').eq('id',btn.dataset.id).single();
+    if(!e2?.file_data) return;
+    const a=document.createElement('a'); a.href=e2.file_data; a.download=e2.file_name||'evaluation_file';
     document.body.appendChild(a); a.click(); document.body.removeChild(a);
   }));
+  content.querySelectorAll('tbody tr[data-id]').forEach(row=>row.addEventListener('click',()=>openEvalForm(row.dataset.id,content)));
 }
 
 async function openEvalForm(evalId, content) {
@@ -3111,7 +3114,7 @@ async function renderViolations(content) {
     ${list.length===0?`<div class="empty-state"><h4>No violations logged</h4><p>No disciplinary records on file.</p></div>`:`
     <div class="table-wrap"><table>
       <thead><tr><th>Employee</th><th>Type</th><th>Severity</th><th>Date</th><th>Action</th><th></th></tr></thead>
-      <tbody>${list.map(v=>`<tr>
+      <tbody>${list.map(v=>`<tr data-id="${v.id}" style="cursor:pointer;">
         <td><strong>${v.emp_name}</strong><br><span class="mono" style="font-size:11px;color:var(--muted);">${v.emp_id}</span></td>
         <td>${v.type}</td>
         <td><span class="badge ${badgeClass(v.severity)}">${v.severity}</span></td>
@@ -3119,13 +3122,15 @@ async function renderViolations(content) {
         <td>${v.action||'—'}</td>
         <td style="white-space:nowrap;">
           ${v.file_data?`<button class="btn btn-outline btn-sm dl-viol-btn" data-id="${v.id}" data-name="${v.file_name||'file'}" style="font-size:11px;">⬇ ${(v.file_name||'file').slice(0,12)}</button> `:''}
+          ${v.file_name&&v.file_name.startsWith('gdrive:')?`<a href="${v.file_name.replace('gdrive:','')}" target="_blank" class="btn btn-outline btn-sm" style="font-size:11px;" onclick="event.stopPropagation()">🔗 Drive</a> `:''}
+          <button class="btn btn-outline btn-sm edit-viol-btn" data-id="${v.id}">Edit</button>
           <button class="btn btn-danger btn-sm del-viol-btn" data-id="${v.id}">Delete</button>
         </td>
       </tr>`).join('')}</tbody></table></div>`}`;
 
   let violSearchTimer;
   document.getElementById('violSearch').addEventListener('input',e=>{S.violSearch=e.target.value; clearTimeout(violSearchTimer); violSearchTimer=setTimeout(()=>renderViolations(content),300);});
-  document.getElementById('addViolBtn').addEventListener('click',()=>openViolForm(content));
+  document.getElementById('addViolBtn').addEventListener('click',()=>openViolForm(null,content));
   document.getElementById('exportViolBtn').addEventListener('click',()=>{
     openExportModal({
       title:'Violations',
@@ -3148,43 +3153,62 @@ async function renderViolations(content) {
       }
     });
   });
-  content.querySelectorAll('.del-viol-btn').forEach(btn=>btn.addEventListener('click',async()=>{ await sb.from('violations').delete().eq('id',btn.dataset.id); toast('Violation deleted.'); renderViolations(content); }));
-  content.querySelectorAll('.dl-viol-btn').forEach(btn=>btn.addEventListener('click',async()=>{
+  content.querySelectorAll('.edit-viol-btn').forEach(btn=>btn.addEventListener('click',e=>{e.stopPropagation();openViolForm(btn.dataset.id,content);}));
+  content.querySelectorAll('.del-viol-btn').forEach(btn=>btn.addEventListener('click',async e=>{ e.stopPropagation(); await sb.from('violations').delete().eq('id',btn.dataset.id); toast('Violation deleted.'); renderViolations(content); }));
+  content.querySelectorAll('.dl-viol-btn').forEach(btn=>btn.addEventListener('click',async e=>{
+    e.stopPropagation();
     const {data:v}=await sb.from('violations').select('file_data,file_name').eq('id',btn.dataset.id).single();
     if(!v?.file_data) return;
     const a=document.createElement('a'); a.href=v.file_data; a.download=v.file_name||'violation_file';
     document.body.appendChild(a); a.click(); document.body.removeChild(a);
   }));
+  content.querySelectorAll('tbody tr[data-id]').forEach(row=>row.addEventListener('click',()=>openViolForm(row.dataset.id,content)));
 }
 
-async function openViolForm(content) {
+async function openViolForm(violId, content) {
   const {data:emps}=await sb.from('employees').select('id,full_name').order('last_name');
+  let viol=null; if(violId){const{data}=await sb.from('violations').select('*').eq('id',violId).single();viol=data;}
   openModal(`
-    <div class="modal-tab-label">LOG VIOLATION</div>
-    <div class="modal-head"><div><h3>Log Violation</h3></div><button class="modal-close" id="closeModalBtn">&times;</button></div>
+    <div class="modal-tab-label">${viol?'EDIT':'LOG'} VIOLATION</div>
+    <div class="modal-head"><div><h3>${viol?'Edit Violation':'Log Violation'}</h3></div><button class="modal-close" id="closeModalBtn">&times;</button></div>
     <div class="modal-body"><div class="form-grid">
-      <div class="field field-full"><label>Employee</label><select id="v_emp">${(emps||[]).map(e=>`<option value="${e.id}">${e.full_name} (${e.id})</option>`).join('')}</select></div>
-      <div class="field"><label>Violation Type</label><input type="text" id="v_type" placeholder="e.g. Tardiness, Insubordination"></div>
-      <div class="field"><label>Severity</label><select id="v_sev"><option>Minor</option><option>Major</option></select></div>
-      <div class="field"><label>Date</label><input type="date" id="v_date" value="${new Date().toISOString().slice(0,10)}"></div>
-      <div class="field field-full"><label>Action Taken</label><input type="text" id="v_action" placeholder="e.g. Verbal warning"></div>
-      <div class="field field-full"><label>Notes</label><textarea id="v_notes" rows="2"></textarea></div>
+      <div class="field field-full"><label>Employee</label><select id="v_emp" ${viol?'disabled':''}>${(emps||[]).map(e=>`<option value="${e.id}" ${viol?.emp_id===e.id?'selected':''}>${e.full_name} (${e.id})</option>`).join('')}</select></div>
+      <div class="field"><label>Violation Type</label><input type="text" id="v_type" value="${viol?.type||''}" placeholder="e.g. Tardiness, Insubordination"></div>
+      <div class="field"><label>Severity</label><select id="v_sev"><option ${viol?.severity==='Minor'?'selected':''}>Minor</option><option ${viol?.severity==='Major'?'selected':''}>Major</option></select></div>
+      <div class="field"><label>Date</label><input type="date" id="v_date" value="${viol?.date||new Date().toISOString().slice(0,10)}"></div>
+      <div class="field field-full"><label>Action Taken</label><input type="text" id="v_action" value="${viol?.action||''}" placeholder="e.g. Verbal warning"></div>
+      <div class="field field-full"><label>Notes</label><textarea id="v_notes" rows="2">${viol?.notes||''}</textarea></div>
       <div class="field field-full">
         <label>Attach File or Link <span style="font-weight:400;color:var(--muted);">(optional — incident report, NTE)</span></label>
-        ${fileOrDriveInput('v', null, null)}
+        ${fileOrDriveInput('v', viol?.file_data||null, viol?.file_name||null)}
       </div>
     </div></div>
-    <div class="modal-foot"><button class="btn btn-outline" id="cancelViolBtn">Cancel</button><button class="btn btn-primary" id="saveViolBtn">Log Violation</button></div>`);
+    <div class="modal-foot">
+      ${viol?`<button class="btn btn-danger btn-sm" id="deleteViolInFormBtn" style="margin-right:auto;">Delete</button>`:''}
+      <button class="btn btn-outline" id="cancelViolBtn">Cancel</button><button class="btn btn-primary" id="saveViolBtn">${viol?'Save Changes':'Log Violation'}</button>
+    </div>`);
   document.getElementById('closeModalBtn').addEventListener('click',closeModal);
   document.getElementById('cancelViolBtn').addEventListener('click',closeModal);
   wireFileTabs();
+  document.getElementById('deleteViolInFormBtn')?.addEventListener('click',async()=>{
+    const btn=document.getElementById('deleteViolInFormBtn');
+    if(btn.dataset.confirming==='true'){
+      await sb.from('violations').delete().eq('id',violId);
+      closeModal(); toast('Violation deleted.'); renderViolations(content);
+    } else {
+      btn.dataset.confirming='true'; btn.textContent='Click again to confirm';
+      setTimeout(()=>{if(btn){btn.dataset.confirming='false';btn.textContent='Delete';}},3000);
+    }
+  });
   document.getElementById('saveViolBtn').addEventListener('click',async()=>{
-    const empId=document.getElementById('v_emp').value; const emp=(emps||[]).find(e=>e.id===empId);
+    const empId=viol?viol.emp_id:document.getElementById('v_emp').value; const emp=(emps||[]).find(e=>e.id===empId);
     const type=document.getElementById('v_type').value.trim(); if(!type){toast('Please enter a violation type.');return;}
     const btn=document.getElementById('saveViolBtn'); btn.disabled=true; btn.innerHTML='<span class="spinner"></span>';
     const {fileData:vFileData, fileName:vFileName} = await getFileOrDriveValue('v');
-    await sb.from('violations').insert({id:`VL-${Date.now()}`,emp_id:empId,emp_name:emp?.full_name,type,severity:document.getElementById('v_sev').value,date:document.getElementById('v_date').value,action:document.getElementById('v_action').value.trim(),notes:document.getElementById('v_notes').value.trim(),file_data:vFileData,file_name:vFileName||null});
-    closeModal(); toast('Violation logged.'); renderViolations(content);
+    const payload = {emp_id:empId,emp_name:emp?.full_name||viol?.emp_name,type,severity:document.getElementById('v_sev').value,date:document.getElementById('v_date').value,action:document.getElementById('v_action').value.trim(),notes:document.getElementById('v_notes').value.trim()};
+    if(vFileData!==null||vFileName!==null){ payload.file_data=vFileData; payload.file_name=vFileName; }
+    if(viol){ await sb.from('violations').update(payload).eq('id',viol.id); } else { await sb.from('violations').insert({id:`VL-${Date.now()}`,...payload}); }
+    closeModal(); toast(viol?'Violation updated.':'Violation logged.'); renderViolations(content);
   });
 }
 
@@ -3344,7 +3368,7 @@ async function renderEmpHistory(content) {
     ${list.length===0?`<div class="empty-state"><h4>No records found</h4></div>`:`
     <div class="table-wrap"><table>
       <thead><tr><th>Employee ID</th><th>Full Name</th><th>Effective Date</th><th>Movement Type</th><th>Previous Details</th><th>New Details</th><th>Approved By</th><th>Remarks</th><th></th></tr></thead>
-      <tbody>${list.map(r=>`<tr>
+      <tbody>${list.map(r=>`<tr data-id="${r.id}" style="cursor:pointer;">
         <td class="mono">${r.emp_id}</td><td><strong>${r.emp_name||'—'}</strong></td>
         <td class="mono">${fmtDate(r.effective_date)}</td><td><span class="badge badge-active">${r.movement_type||'—'}</span></td>
         <td style="color:var(--muted);">${r.previous_details||'—'}</td><td><strong>${r.new_details||'—'}</strong></td>
@@ -3384,8 +3408,9 @@ async function renderEmpHistory(content) {
       }
     });
   });
-  content.querySelectorAll('.edit-eh-btn').forEach(btn=>btn.addEventListener('click',()=>openEHForm(btn.dataset.id,content)));
-  content.querySelectorAll('.del-eh-btn').forEach(btn=>btn.addEventListener('click',async()=>{ await sb.from('employment_history').delete().eq('id',btn.dataset.id); toast('Record deleted.'); renderEmpHistory(content); }));
+  content.querySelectorAll('.edit-eh-btn').forEach(btn=>btn.addEventListener('click',e=>{e.stopPropagation();openEHForm(btn.dataset.id,content);}));
+  content.querySelectorAll('.del-eh-btn').forEach(btn=>btn.addEventListener('click',async e=>{ e.stopPropagation(); await sb.from('employment_history').delete().eq('id',btn.dataset.id); toast('Record deleted.'); renderEmpHistory(content); }));
+  content.querySelectorAll('tbody tr[data-id]').forEach(row=>row.addEventListener('click',()=>openEHForm(row.dataset.id,content)));
 }
 
 async function openEHForm(recordId, content) {
@@ -3558,7 +3583,7 @@ async function renderMedical(content) {
       <tbody>${filtered.map(r => {
         const st = medStatus(r);
         const cat = MEDICAL_CATEGORIES.find(c => c.name === r.category);
-        return `<tr>
+        return `<tr data-id="${r.id}" style="cursor:pointer;">
           <td><strong>${r.emp_name||'—'}</strong><br><span class="mono" style="font-size:11px;color:var(--muted);">${r.emp_id}</span></td>
           <td>${cat?.icon||'🏥'} ${r.category}</td>
           <td class="mono">${fmtDate(r.exam_date)}</td>
@@ -3566,7 +3591,7 @@ async function renderMedical(content) {
           <td><span class="badge ${medStatusBadge(st)}">${st}</span></td>
           <td style="font-size:12px;color:var(--muted);">${r.notes||'—'}</td>
           <td style="white-space:nowrap;">
-            ${r.file_name ? (r.file_name.startsWith('gdrive:') ? `<a href="${r.file_name.replace('gdrive:','')}" target="_blank" class="btn btn-outline btn-sm" style="font-size:11px;">🔗 Drive</a> ` : `<button class="btn btn-outline btn-sm dl-med-btn" data-id="${r.id}" style="font-size:11px;">⬇ ${(r.file_name||'').slice(0,10)}</button> `) : ''}
+            ${r.file_name ? (r.file_name.startsWith('gdrive:') ? `<a href="${r.file_name.replace('gdrive:','')}" target="_blank" class="btn btn-outline btn-sm" style="font-size:11px;" onclick="event.stopPropagation()">🔗 Drive</a> ` : `<button class="btn btn-outline btn-sm dl-med-btn" data-id="${r.id}" style="font-size:11px;">⬇ ${(r.file_name||'').slice(0,10)}</button> `) : ''}
             <button class="btn btn-outline btn-sm edit-med-btn" data-id="${r.id}">Edit</button>
             <button class="btn btn-danger btn-sm del-med-btn" data-id="${r.id}">Delete</button>
           </td>
@@ -3581,17 +3606,20 @@ async function renderMedical(content) {
     medSearchTimer = setTimeout(() => renderMedical(content), 300);
   });
   document.getElementById('addMedBtn').addEventListener('click', () => openMedicalForm(null, content));
-  content.querySelectorAll('.edit-med-btn').forEach(btn => btn.addEventListener('click', () => openMedicalForm(btn.dataset.id, content)));
-  content.querySelectorAll('.dl-med-btn').forEach(btn => btn.addEventListener('click', async () => {
+  content.querySelectorAll('.edit-med-btn').forEach(btn => btn.addEventListener('click', e => { e.stopPropagation(); openMedicalForm(btn.dataset.id, content); }));
+  content.querySelectorAll('.dl-med-btn').forEach(btn => btn.addEventListener('click', async e => {
+    e.stopPropagation();
     const {data:r} = await sb.from('medical_records').select('file_data,file_name').eq('id', btn.dataset.id).single();
     if (!r?.file_data) return;
     const a = document.createElement('a'); a.href = r.file_data; a.download = r.file_name||'medical_record';
     document.body.appendChild(a); a.click(); document.body.removeChild(a);
   }));
-  content.querySelectorAll('.del-med-btn').forEach(btn => btn.addEventListener('click', async () => {
+  content.querySelectorAll('.del-med-btn').forEach(btn => btn.addEventListener('click', async e => {
+    e.stopPropagation();
     await sb.from('medical_records').delete().eq('id', btn.dataset.id);
     toast('Record deleted.'); renderMedical(content);
   }));
+  content.querySelectorAll('tbody tr[data-id]').forEach(row => row.addEventListener('click', () => openMedicalForm(row.dataset.id, content)));
 }
 
 async function openMedicalForm(recordId, content) {

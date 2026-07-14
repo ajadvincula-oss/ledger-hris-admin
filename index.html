@@ -1188,21 +1188,32 @@ window.addEventListener('DOMContentLoaded', async () => {
 
   if (BAKED_URL && BAKED_KEY && BAKED_URL !== 'SUPABASE_URL_DITO') {
     // Auto-connect using baked credentials
+    sb = supabase.createClient(BAKED_URL, BAKED_KEY);
+    // Read any saved session FIRST, before risky network calls, so a transient
+    // network hiccup below can never wipe out a valid, already-logged-in session.
+    const sess = loadSession();
+    if (sess && sess.admin) {
+      S.admin = sess.admin; S.view = 'admin'; S.page = sess.page || 'dashboard';
+    } else if (sess && sess.employee) {
+      S.employee = sess.employee; S.view = 'employee'; S.empPage = sess.empPage || 'overview';
+    } else {
+      S.view = S.defaultView || 'landing';
+    }
     try {
-      sb = supabase.createClient(BAKED_URL, BAKED_KEY);
       await loadCompanySettings();
       startRealtime();
-      const sess = loadSession();
-      if (sess && sess.admin) {
-        S.admin = sess.admin; S.view = 'admin'; S.page = sess.page || 'dashboard';
-      } else if (sess && sess.employee) {
-        S.employee = sess.employee; S.view = 'employee'; S.empPage = sess.empPage || 'overview';
-      } else {
-        S.view = S.defaultView || 'landing';
+      // Re-fetch the FULL record so refreshing never leaves profile fields
+      // undefined — the cached session only stores a small subset of fields.
+      if (S.admin?.id) {
+        const {data:freshAdmin} = await sb.from('admin_accounts').select('*').eq('id', S.admin.id).maybeSingle();
+        if (freshAdmin) S.admin = freshAdmin;
+      } else if (S.employee?.id) {
+        const {data:freshEmp} = await sb.from('employees').select('*').eq('id', S.employee.id).maybeSingle();
+        if (freshEmp) S.employee = freshEmp;
       }
     } catch(err) {
-      console.error('Auto-connect failed:', err);
-      S.view = S.defaultView || 'landing';
+      console.error('Auto-connect refresh failed (keeping cached session):', err);
+      // Do NOT reset S.view here — keep whatever session was already restored above.
     }
   } else {
     // Show config screen

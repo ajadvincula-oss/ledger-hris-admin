@@ -2780,8 +2780,8 @@ async function getSupervisorSelectHTML(inputId, currentVal=''){
     sb.from('admin_accounts').select('id,name,role').order('name')
   ]);
 
-  // Filter employees — only managers, supervisors, leads, heads
-  const keywords = ['manager','supervisor','head','lead','officer','director','chief','coordinator'];
+  // Filter employees — only Supervisors and Managers (HR and Super Admin come from admin_accounts below)
+  const keywords = ['manager','supervisor'];
   const filteredEmps = (emps||[]).filter(e => {
     const pos = (e.position||'').toLowerCase();
     return keywords.some(k => pos.includes(k));

@@ -1080,7 +1080,7 @@ const MOVEMENT_TYPES = ['Hired','Regularization','Promotion','Transfer','Demotio
 const LEAVE_TYPES = ['Vacation Leave','Sick Leave','Emergency Leave','Bereavement Leave','Maternity Leave','Paternity Leave','Birthday Leave'];
 const NON_DEDUCTIBLE_LEAVE_TYPES = ['Birthday Leave','Bereavement Leave','Maternity Leave','Paternity Leave'];
 const CIVIL_STATUSES = ['Single','Married','Widowed','Separated','Annulled','Live-in'];
-const MODULES = ['Dashboard','Employees','Leave','Evaluation','Violations','Documents','Employment History','Medical Records','Settings'];
+const MODULES = ['Dashboard','Employees','Attendance','Leave','Evaluation','Violations','Documents','Employment History','Medical Records','Settings'];
 
 const MEDICAL_CATEGORIES = [
   {name:'Pre-employment Medical Exam', validity_months:12, icon:'🏥'},
@@ -1160,6 +1160,11 @@ const S = { // app state
   company: '',
   logo: '',
   proratedDefault: 15,
+  workLat: null,
+  workLng: null,
+  workRadius: 100,
+  attSearch: '',
+  attDateFilter: '',
   adminLoginError: '',
   empLoginError: '',
   empSearch: '',
@@ -1321,6 +1326,9 @@ async function loadCompanySettings() {
       if (r.key === 'company_name') S.company = r.value || '';
       if (r.key === 'company_logo') S.logo = r.value || '';
       if (r.key === 'prorated_days_default') S.proratedDefault = parseInt(r.value) || 15;
+      if (r.key === 'work_location_lat') S.workLat = r.value ? parseFloat(r.value) : null;
+      if (r.key === 'work_location_lng') S.workLng = r.value ? parseFloat(r.value) : null;
+      if (r.key === 'work_location_radius') S.workRadius = parseInt(r.value) || 100;
     });  } catch(e) {}
 }
 
@@ -1363,6 +1371,26 @@ function renderPage() { renderAdminShell(); }
 
 /* ==================== UTILS ==================== */
 function fmtDate(d) { if (!d) return '—'; return new Date(d).toLocaleDateString('en-US', {month:'short', day:'2-digit', year:'numeric'}); }
+function fmtTime12(ts) { if (!ts) return '—'; return new Date(ts).toLocaleTimeString('en-US', {hour:'numeric', minute:'2-digit', hour12:true}); }
+function todayStr() { return new Date().toISOString().slice(0,10); }
+// Haversine formula — distance in meters between two lat/lng points
+function distanceMeters(lat1, lng1, lat2, lng2) {
+  const R = 6371000;
+  const toRad = d => d * Math.PI / 180;
+  const dLat = toRad(lat2 - lat1), dLng = toRad(lng2 - lng1);
+  const a = Math.sin(dLat/2)**2 + Math.cos(toRad(lat1))*Math.cos(toRad(lat2))*Math.sin(dLng/2)**2;
+  return R * 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1-a));
+}
+function getCurrentLocation() {
+  return new Promise((resolve, reject) => {
+    if (!navigator.geolocation) { reject(new Error('Geolocation is not supported on this device/browser.')); return; }
+    navigator.geolocation.getCurrentPosition(
+      pos => resolve({ lat: pos.coords.latitude, lng: pos.coords.longitude, accuracy: pos.coords.accuracy }),
+      err => reject(new Error(err.message || 'Could not get your location. Please enable location access.')),
+      { enableHighAccuracy: true, timeout: 15000, maximumAge: 0 }
+    );
+  });
+}
 function fmtMoney(n) { return '₱' + (parseFloat(n)||0).toLocaleString('en-PH', {minimumFractionDigits:2, maximumFractionDigits:2}); }
 function pad(n) { return n.toString().padStart(2, '0'); }
 function badgeClass(s) { return {Active:'badge-active',Inactive:'badge-inactive','On Leave':'badge-leave',Pending:'badge-pending',Approved:'badge-approved',Rejected:'badge-rejected',Complete:'badge-complete',Missing:'badge-missing',Minor:'badge-minor',Major:'badge-major'}[s] || 'badge-inactive'; }
@@ -1553,6 +1581,7 @@ function renderForcePin() {
 /* ==================== ADMIN SHELL ==================== */
 const NAV = [
   {key:'dashboard',label:'Dashboard'},{key:'employees',label:'Employees'},
+  {key:'attendance',label:'Attendance'},
   {key:'leave',label:'Leave'},
   {key:'evaluation',label:'Evaluation'},{key:'violations',label:'Violations'},
   {key:'documents',label:'Documents'},{key:'emphistory',label:'Employment History'},
@@ -1582,7 +1611,7 @@ function renderAdminShell() {
     S.page = btn.dataset.page; closeSidebar(); renderAdminShell();
   }));
 
-  const titles = {dashboard:['Dashboard','Dashboard'],employees:['Records','Employees'],leave:['Requests','Leave'],evaluation:['Performance','Evaluation'],violations:['Disciplinary Records','Violations'],documents:['201 File Tracker','Documents'],emphistory:['Movement Records','Employment History'],medical:['Health Records','Medical Records'],settings:['Configuration','Settings']};
+  const titles = {dashboard:['Dashboard','Dashboard'],employees:['Records','Employees'],attendance:['Time Logs','Attendance'],leave:['Requests','Leave'],evaluation:['Performance','Evaluation'],violations:['Disciplinary Records','Violations'],documents:['201 File Tracker','Documents'],emphistory:['Movement Records','Employment History'],medical:['Health Records','Medical Records'],settings:['Configuration','Settings']};
   const t = titles[S.page]||['',''];
   document.getElementById('breadcrumb').textContent = t[0];
   document.getElementById('pageTitle').textContent = t[1];
@@ -1592,6 +1621,7 @@ function renderAdminShell() {
   switch(S.page) {
     case 'dashboard':  renderDashboard(content); break;
     case 'employees':  renderEmployees(content); break;
+    case 'attendance': renderAttendance(content); break;
     case 'leave':      renderLeave(content); break;
     case 'evaluation': renderEvaluation(content); break;
     case 'violations': renderViolations(content); break;
@@ -2108,6 +2138,19 @@ function startRealtime() {
   }
 
   realtimeChannel = sb.channel('ledger-hris-live')
+    .on('postgres_changes', { event: '*', schema: 'public', table: 'attendance_logs' }, (payload) => {
+      showLiveToast('Attendance updated');
+      debounceRefresh('attendance', () => {
+        if (S.view === 'admin' && S.page === 'attendance') {
+          const content = document.getElementById('adminContent');
+          if (content) renderAttendance(content);
+        }
+        if (S.view === 'employee' && S.empPage === 'attendance') {
+          const content = document.getElementById('empContent');
+          if (content && S.employee) renderEmpAttendance(content, S.employee);
+        }
+      });
+    })
     .on('postgres_changes', { event: '*', schema: 'public', table: 'leave_requests' }, (payload) => {
       showLiveToast('Leave updated');
       debounceRefresh('leave', () => {
@@ -2502,6 +2545,71 @@ async function openEmpForm(empId, content) {
     if(error) { toast('Error: '+error.message); btn.disabled=false; btn.innerHTML=emp?'Save Changes':'Add Employee'; return; }
     if(!emp) { await sb.from('documents').insert(DOC_TYPES.map(d=>({emp_id:id,doc_name:d,status:'Missing'}))); }
     closeModal(); toast(emp?'Employee updated.':'Employee added successfully.'); renderEmployees(content);
+  });
+}
+
+/* ==================== ATTENDANCE ==================== */
+async function renderAttendance(content) {
+  loading(content);
+  let q = sb.from('attendance_logs').select('*').order('log_date',{ascending:false}).order('time_in',{ascending:false});
+  if (S.attSearch) q = q.ilike('emp_name', `%${S.attSearch}%`);
+  if (S.attDateFilter) q = q.eq('log_date', S.attDateFilter);
+  const {data:logs} = await q;
+  const list = logs||[];
+
+  const hasWorkLoc = S.workLat!=null && S.workLng!=null;
+
+  content.innerHTML = `
+    <div class="page-header"><p class="desc">Real-time employee time in/out logs, verified by GPS location.</p></div>
+    ${!hasWorkLoc ? `<div class="note-banner">⚠️ No work location has been set yet. Go to <strong>Settings</strong> to set the office coordinates — employees cannot time in/out until this is configured.</div>` : ''}
+    <div class="toolbar">
+      <div class="toolbar-left" style="flex:1;flex-wrap:wrap;">
+        <div class="search-box" style="min-width:200px;"><span class="mono" style="font-size:13px;">&#8981;</span><input type="text" id="attSearch" placeholder="Search employee…" value="${S.attSearch||''}"></div>
+        <input type="date" id="attDateFilter" class="select-filter" value="${S.attDateFilter||''}">
+        <span class="mono" style="font-size:12px;color:var(--muted);">${list.length} log(s)</span>
+      </div>
+      <button class="btn btn-outline" id="exportAttBtn">⬇ Export CSV</button>
+    </div>
+    ${list.length===0?`<div class="empty-state"><h4>No attendance logs found</h4><p>Time-in records will appear here once employees start logging attendance.</p></div>`:`
+    <div class="table-wrap"><table>
+      <thead><tr><th>Employee</th><th>Date</th><th>Time In</th><th>Time Out</th><th>Status</th><th>Location Check</th></tr></thead>
+      <tbody>${list.map(l=>`<tr>
+        <td><strong>${l.emp_name}</strong><br><span class="mono" style="font-size:11px;color:var(--muted);">${l.emp_id}</span></td>
+        <td class="mono">${fmtDate(l.log_date)}</td>
+        <td class="mono">${fmtTime12(l.time_in)}</td>
+        <td class="mono">${l.time_out?fmtTime12(l.time_out):'—'}</td>
+        <td><span class="badge ${l.time_out?'badge-approved':'badge-pending'}">${l.time_out?'Complete':'Incomplete'}</span></td>
+        <td style="font-size:11.5px;color:var(--muted);">
+          ${l.time_in_distance_m!=null?`In: ${Math.round(l.time_in_distance_m)}m from office`:''}
+          ${l.time_out_distance_m!=null?`<br>Out: ${Math.round(l.time_out_distance_m)}m from office`:''}
+        </td>
+      </tr>`).join('')}</tbody>
+    </table></div>`}`;
+
+  let attSearchTimer;
+  document.getElementById('attSearch').addEventListener('input',e=>{S.attSearch=e.target.value; clearTimeout(attSearchTimer); attSearchTimer=setTimeout(()=>renderAttendance(content),300);});
+  document.getElementById('attDateFilter').addEventListener('change',e=>{S.attDateFilter=e.target.value; renderAttendance(content);});
+  document.getElementById('exportAttBtn').addEventListener('click',()=>{
+    openExportModal({
+      title: 'Attendance Logs',
+      filters: [
+        {id:'name', label:'Employee Name (contains)', type:'text', placeholder:'e.g. Santos'},
+        {id:'from', label:'Date From', type:'date'},
+        {id:'to', label:'Date To', type:'date'},
+      ],
+      onExport: async (v)=>{
+        let q = sb.from('attendance_logs').select('*').order('log_date',{ascending:false});
+        if(v.name) q=q.ilike('emp_name',`%${v.name}%`);
+        if(v.from) q=q.gte('log_date',v.from);
+        if(v.to) q=q.lte('log_date',v.to);
+        const {data:logs}=await q;
+        if(!logs?.length){toast('No records found.');return;}
+        downloadCSV(`${S.company||'HRIS'}_attendance_${csvDate()}.csv`, toCSV(
+          ['Employee ID','Employee Name','Date','Time In','Time Out','Status','Time In Distance (m)','Time Out Distance (m)'],
+          logs.map(l=>[l.emp_id,l.emp_name,l.log_date,l.time_in?fmtTime12(l.time_in):'',l.time_out?fmtTime12(l.time_out):'',l.time_out?'Complete':'Incomplete',l.time_in_distance_m??'',l.time_out_distance_m??''])
+        )); toast(`${logs.length} attendance records exported.`);
+      }
+    });
   });
 }
 
@@ -3843,6 +3951,21 @@ async function renderSettings(content) {
         <div id="cs_ok" style="display:none;" class="note-banner">&#10003; Settings saved.</div>
         <button class="btn btn-primary" id="saveSettingsBtn">Save Settings</button>
       </div>
+    </div>
+    <div class="record-card" style="padding:22px 24px;max-width:520px;margin-bottom:24px;">
+      <div class="record-tab">WORK LOCATION (ATTENDANCE)</div>
+      <div style="margin-top:12px;">
+        <p style="font-size:12.5px;color:var(--muted);margin-bottom:14px;line-height:1.5;">Employees can only time in/out when physically within this radius of the work address.</p>
+        <div class="form-grid">
+          <div class="field"><label>Latitude</label><input type="text" id="cs_lat" value="${S.workLat??''}" placeholder="e.g. 15.037621"></div>
+          <div class="field"><label>Longitude</label><input type="text" id="cs_lng" value="${S.workLng??''}" placeholder="e.g. 120.686640"></div>
+        </div>
+        <div class="field"><label>Allowed Radius (meters)</label><input type="number" id="cs_radius" value="${S.workRadius||100}" min="10" max="5000"></div>
+        <button class="btn btn-outline btn-sm" id="useMyLocBtn" type="button">📍 Use My Current Location</button>
+        <div id="cs_loc_status" style="font-size:11.5px;color:var(--muted);margin-top:6px;"></div>
+        <div id="cs_loc_ok" style="display:none;margin-top:10px;" class="note-banner">&#10003; Work location saved.</div>
+        <button class="btn btn-primary" id="saveWorkLocBtn" style="margin-top:12px;">Save Work Location</button>
+      </div>
     </div>` : `
     <div class="record-card" style="padding:18px 22px;max-width:520px;margin-bottom:24px;border:1px dashed var(--line-strong);">
       <div style="display:flex;align-items:center;gap:10px;">
@@ -3905,6 +4028,30 @@ async function renderSettings(content) {
       if(newLogoData) S.logo=newLogoData;
       const ok=document.getElementById('cs_ok'); ok.style.display='flex'; setTimeout(()=>{ok.style.display='none'; renderSettings(content);},1500);
       renderAdminShell();
+    });
+    document.getElementById('useMyLocBtn')?.addEventListener('click', async()=>{
+      const statusEl=document.getElementById('cs_loc_status');
+      statusEl.textContent='Getting your current location…';
+      try{
+        const loc=await getCurrentLocation();
+        document.getElementById('cs_lat').value=loc.lat.toFixed(6);
+        document.getElementById('cs_lng').value=loc.lng.toFixed(6);
+        statusEl.textContent=`✓ Location captured (accuracy: ~${Math.round(loc.accuracy)}m). Review and click Save.`;
+      }catch(err){ statusEl.textContent='⚠ '+err.message; }
+    });
+    document.getElementById('saveWorkLocBtn')?.addEventListener('click', async()=>{
+      const lat=parseFloat(document.getElementById('cs_lat').value);
+      const lng=parseFloat(document.getElementById('cs_lng').value);
+      const radius=parseInt(document.getElementById('cs_radius').value)||100;
+      if(isNaN(lat)||isNaN(lng)){toast('Please enter a valid latitude and longitude, or use "Use My Current Location".');return;}
+      await Promise.all([
+        saveSetting('work_location_lat', String(lat)),
+        saveSetting('work_location_lng', String(lng)),
+        saveSetting('work_location_radius', String(radius))
+      ]);
+      S.workLat=lat; S.workLng=lng; S.workRadius=radius;
+      const ok=document.getElementById('cs_loc_ok'); ok.style.display='flex'; setTimeout(()=>{ok.style.display='none';},2000);
+      toast('Work location saved.');
     });
     document.getElementById('addAdminBtn').addEventListener('click',()=>openAdminForm(null,content));
     content.querySelectorAll('.edit-admin-btn').forEach(btn=>btn.addEventListener('click',()=>openAdminForm(btn.dataset.id,content)));
@@ -3980,7 +4127,7 @@ async function openAdminForm(accountId, content) {
 }
 
 /* ==================== EMPLOYEE SELF-SERVICE ==================== */
-const EMP_NAV=[{key:'overview',label:'My Profile'},{key:'leave',label:'My Leave'},{key:'evaluation',label:'My Evaluation'},{key:'documents',label:'My Documents'},{key:'violations',label:'My Violations'},{key:'history',label:'Employment History'}];
+const EMP_NAV=[{key:'overview',label:'My Profile'},{key:'attendance',label:'My Attendance'},{key:'leave',label:'My Leave'},{key:'evaluation',label:'My Evaluation'},{key:'documents',label:'My Documents'},{key:'violations',label:'My Violations'},{key:'history',label:'Employment History'}];
 
 /* ==================== BIRTHDAY GREETING ==================== */
 function showBirthdayGreeting(emp) {
@@ -4231,6 +4378,7 @@ async function renderEmpShell() {
   const content=document.getElementById('empContent');
   switch(S.empPage){
     case 'overview':   await renderEmpOverview(content,emp); break;
+    case 'attendance': await renderEmpAttendance(content,emp); break;
     case 'leave':      await renderEmpLeave(content,emp); break;
     case 'evaluation': await renderEmpEval(content,emp); break;
     case 'documents':  await renderEmpDocs(content,emp); break;
@@ -4307,6 +4455,98 @@ async function renderEmpOverview(content, emp) {
       await sb.from('employees').update({pin:n1}).eq('id',emp.id);
       S.employee.pin=n1; closeModal(); toast('PIN changed successfully.');
     });
+  });
+}
+
+async function renderEmpAttendance(content, emp) {
+  loading(content);
+  const today = todayStr();
+  const {data:todayLog} = await sb.from('attendance_logs').select('*').eq('emp_id',emp.id).eq('log_date',today).maybeSingle();
+  const {data:history} = await sb.from('attendance_logs').select('*').eq('emp_id',emp.id).order('log_date',{ascending:false}).limit(30);
+  const list = history||[];
+  const hasWorkLoc = S.workLat!=null && S.workLng!=null;
+
+  content.innerHTML = `
+    <div class="page-header"><p class="desc">Time in and time out — verified by your current location.</p></div>
+    ${!hasWorkLoc ? `<div class="note-banner">⚠️ Work location has not been configured yet by HR. Please contact HR before timing in.</div>` : ''}
+    <div class="record-card" style="padding:22px 24px;max-width:520px;margin-bottom:24px;">
+      <div class="record-tab">${fmtDate(today)}</div>
+      <div style="display:flex;align-items:center;justify-content:space-between;gap:16px;flex-wrap:wrap;">
+        <div>
+          <div class="detail-row" style="border:none;padding:6px 0;"><span class="k">Time In</span><span class="v mono">${todayLog?.time_in?fmtTime12(todayLog.time_in):'— not yet —'}</span></div>
+          <div class="detail-row" style="border:none;padding:6px 0;"><span class="k">Time Out</span><span class="v mono">${todayLog?.time_out?fmtTime12(todayLog.time_out):'— not yet —'}</span></div>
+        </div>
+        <div>
+          ${!todayLog || !todayLog.time_in
+            ? `<button class="btn btn-primary" id="timeInBtn" ${!hasWorkLoc?'disabled':''}>📍 Time In</button>`
+            : !todayLog.time_out
+            ? `<button class="btn btn-primary" id="timeOutBtn" ${!hasWorkLoc?'disabled':''}>📍 Time Out</button>`
+            : `<span class="badge badge-approved">✓ Complete for today</span>`
+          }
+        </div>
+      </div>
+      <div id="att_status" style="font-size:12px;color:var(--muted);margin-top:10px;"></div>
+    </div>
+
+    <div class="section-label">Recent Attendance</div>
+    ${list.length===0?`<div class="empty-state"><h4>No attendance logs yet</h4></div>`:`
+    <div class="table-wrap"><table>
+      <thead><tr><th>Date</th><th>Time In</th><th>Time Out</th><th>Status</th></tr></thead>
+      <tbody>${list.map(l=>`<tr>
+        <td class="mono">${fmtDate(l.log_date)}</td>
+        <td class="mono">${fmtTime12(l.time_in)}</td>
+        <td class="mono">${l.time_out?fmtTime12(l.time_out):'—'}</td>
+        <td><span class="badge ${l.time_out?'badge-approved':'badge-pending'}">${l.time_out?'Complete':'Incomplete'}</span></td>
+      </tr>`).join('')}</tbody>
+    </table></div>`}`;
+
+  document.getElementById('timeInBtn')?.addEventListener('click', async()=>{
+    const btn=document.getElementById('timeInBtn'); const statusEl=document.getElementById('att_status');
+    btn.disabled=true; btn.innerHTML='<span class="spinner"></span> Getting location…';
+    try{
+      const loc = await getCurrentLocation();
+      const dist = distanceMeters(loc.lat, loc.lng, S.workLat, S.workLng);
+      if(dist > S.workRadius){
+        statusEl.innerHTML = `⚠️ You're ${Math.round(dist)}m away from the office. You must be within ${S.workRadius}m to time in.`;
+        statusEl.style.color = 'var(--rose)';
+        btn.disabled=false; btn.innerHTML='📍 Time In';
+        return;
+      }
+      const {error} = await sb.from('attendance_logs').insert({
+        id:`ATT-${Date.now()}`, emp_id:emp.id, emp_name:emp.full_name, log_date:today,
+        time_in:new Date().toISOString(), time_in_lat:loc.lat, time_in_lng:loc.lng,
+        time_in_accuracy_m:Math.round(loc.accuracy), time_in_distance_m:Math.round(dist)
+      });
+      if(error){ toast('Error: '+error.message); btn.disabled=false; btn.innerHTML='📍 Time In'; return; }
+      toast('Timed in successfully!'); renderEmpAttendance(content, emp);
+    }catch(err){
+      statusEl.innerHTML = '⚠️ '+err.message; statusEl.style.color='var(--rose)';
+      btn.disabled=false; btn.innerHTML='📍 Time In';
+    }
+  });
+
+  document.getElementById('timeOutBtn')?.addEventListener('click', async()=>{
+    const btn=document.getElementById('timeOutBtn'); const statusEl=document.getElementById('att_status');
+    btn.disabled=true; btn.innerHTML='<span class="spinner"></span> Getting location…';
+    try{
+      const loc = await getCurrentLocation();
+      const dist = distanceMeters(loc.lat, loc.lng, S.workLat, S.workLng);
+      if(dist > S.workRadius){
+        statusEl.innerHTML = `⚠️ You're ${Math.round(dist)}m away from the office. You must be within ${S.workRadius}m to time out.`;
+        statusEl.style.color = 'var(--rose)';
+        btn.disabled=false; btn.innerHTML='📍 Time Out';
+        return;
+      }
+      const {error} = await sb.from('attendance_logs').update({
+        time_out:new Date().toISOString(), time_out_lat:loc.lat, time_out_lng:loc.lng,
+        time_out_accuracy_m:Math.round(loc.accuracy), time_out_distance_m:Math.round(dist)
+      }).eq('id', todayLog.id);
+      if(error){ toast('Error: '+error.message); btn.disabled=false; btn.innerHTML='📍 Time Out'; return; }
+      toast('Timed out successfully!'); renderEmpAttendance(content, emp);
+    }catch(err){
+      statusEl.innerHTML = '⚠️ '+err.message; statusEl.style.color='var(--rose)';
+      btn.disabled=false; btn.innerHTML='📍 Time Out';
+    }
   });
 }
 

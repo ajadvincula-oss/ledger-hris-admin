@@ -1163,7 +1163,6 @@ const S = { // app state
   workLat: null,
   workLng: null,
   workRadius: 100,
-  attTab: 'logs',
   attSearch: '',
   attDateFilter: '',
   otSearch: '',
@@ -2642,46 +2641,61 @@ async function renderAttendance(content) {
   loading(content);
   const hasWorkLoc = S.workLat!=null && S.workLng!=null;
 
+  let logQ = sb.from('attendance_logs').select('*').order('log_date',{ascending:false}).order('time_in',{ascending:false});
+  let otQ = sb.from('ot_requests').select('*').order('ot_date',{ascending:false});
+  if (S.attSearch) { logQ = logQ.ilike('emp_name', `%${S.attSearch}%`); otQ = otQ.ilike('emp_name', `%${S.attSearch}%`); }
+  if (S.attDateFilter) { logQ = logQ.eq('log_date', S.attDateFilter); otQ = otQ.eq('ot_date', S.attDateFilter); }
+
+  const [{data:logs}, {data:ots}] = await Promise.all([logQ, otQ]);
+  const logList = logs||[];
+  const otList = ots||[];
+
+  // Merge attendance logs with OT requests by employee + date, so overtime
+  // shows inline in the same row as the time in/out for that day.
+  const rowMap = new Map();
+  logList.forEach(l => { rowMap.set(`${l.emp_id}|${l.log_date}`, { ...l, ot: null }); });
+  otList.forEach(o => {
+    const key = `${o.emp_id}|${o.ot_date}`;
+    if (rowMap.has(key)) { rowMap.get(key).ot = o; }
+    else { rowMap.set(key, { emp_id:o.emp_id, emp_name:o.emp_name, log_date:o.ot_date, time_in:null, time_out:null, time_in_distance_m:null, time_out_distance_m:null, ot:o }); }
+  });
+  const list = Array.from(rowMap.values()).sort((a,b)=> (b.log_date||'').localeCompare(a.log_date||''));
+
   content.innerHTML = `
     <div class="page-header"><p class="desc">Real-time employee time in/out logs, verified by GPS location, plus overtime request approvals.</p></div>
     ${!hasWorkLoc ? `<div class="note-banner">⚠️ No work location has been set yet. Go to <strong>Settings</strong> to set the office coordinates — employees cannot time in/out until this is configured.</div>` : ''}
-    <div class="tabs">
-      <button class="tab-btn ${S.attTab==='logs'?'active':''}" id="attTabLogs">Time Logs</button>
-      <button class="tab-btn ${S.attTab==='ot'?'active':''}" id="attTabOT">OT Requests</button>
-    </div>
-    <div id="attTabContent"></div>`;
-
-  document.getElementById('attTabLogs').addEventListener('click',()=>{S.attTab='logs'; renderAttendance(content);});
-  document.getElementById('attTabOT').addEventListener('click',()=>{S.attTab='ot'; renderAttendance(content);});
-
-  const tabContent = document.getElementById('attTabContent');
-  if (S.attTab === 'ot') { await renderOTRequestsTab(tabContent, content); return; }
-
-  loading(tabContent);
-  let q = sb.from('attendance_logs').select('*').order('log_date',{ascending:false}).order('time_in',{ascending:false});
-  if (S.attSearch) q = q.ilike('emp_name', `%${S.attSearch}%`);
-  if (S.attDateFilter) q = q.eq('log_date', S.attDateFilter);
-  const {data:logs} = await q;
-  const list = logs||[];
-
-  tabContent.innerHTML = `
     <div class="toolbar">
       <div class="toolbar-left" style="flex:1;flex-wrap:wrap;">
         <div class="search-box" style="min-width:200px;"><span class="mono" style="font-size:13px;">&#8981;</span><input type="text" id="attSearch" placeholder="Search employee…" value="${S.attSearch||''}"></div>
         <input type="date" id="attDateFilter" class="select-filter" value="${S.attDateFilter||''}">
-        <span class="mono" style="font-size:12px;color:var(--muted);">${list.length} log(s)</span>
+        <span class="mono" style="font-size:12px;color:var(--muted);">${list.length} record(s)</span>
       </div>
       <button class="btn btn-outline" id="exportAttBtn">⬇ Export CSV</button>
     </div>
     ${list.length===0?`<div class="empty-state"><h4>No attendance logs found</h4><p>Time-in records will appear here once employees start logging attendance.</p></div>`:`
     <div class="table-wrap"><table>
-      <thead><tr><th>Employee</th><th>Date</th><th>Time In</th><th>Time Out</th><th>Status</th><th>Location Check</th></tr></thead>
+      <thead><tr><th>Employee</th><th>Date</th><th>Time In</th><th>Time Out</th><th>Status</th><th>Overtime</th><th>Location Check</th></tr></thead>
       <tbody>${list.map(l=>`<tr>
         <td><strong>${l.emp_name}</strong><br><span class="mono" style="font-size:11px;color:var(--muted);">${l.emp_id}</span></td>
         <td class="mono">${fmtDate(l.log_date)}</td>
-        <td class="mono">${fmtTime12(l.time_in)}</td>
+        <td class="mono">${l.time_in?fmtTime12(l.time_in):'—'}</td>
         <td class="mono">${l.time_out?fmtTime12(l.time_out):'—'}</td>
-        <td><span class="badge ${l.time_out?'badge-approved':'badge-pending'}">${l.time_out?'Complete':'Incomplete'}</span></td>
+        <td>${l.time_in?`<span class="badge ${l.time_out?'badge-approved':'badge-pending'}">${l.time_out?'Complete':'Incomplete'}</span>`:'—'}</td>
+        <td style="white-space:nowrap;">
+          ${!l.ot ? `<span style="font-size:11px;color:var(--muted);">—</span>` : `
+            <div style="font-size:12px;">${l.ot.hours} hr(s)${l.ot.start_time&&l.ot.end_time?` · ${fmtTimeRange(l.ot.start_time,l.ot.end_time)}`:''}</div>
+            <span class="badge ${otStatusBadge(l.ot.status)}" style="font-size:10px;">${l.ot.status}</span>
+            ${l.ot.status==='Rejected'&&l.ot.rejection_reason?`<div style="font-size:10.5px;color:var(--rose);margin-top:2px;">${l.ot.rejection_reason}</div>`:''}
+            <div style="margin-top:4px;">
+              ${(l.ot.status==='Pending HR') || (l.ot.status==='Pending Supervisor' && !l.ot.supervisor_id)
+                ? `<button class="btn btn-primary btn-sm hr-approve-ot-btn" data-id="${l.ot.id}" style="font-size:10.5px;padding:3px 8px;">✓ Approve</button>
+                   <button class="btn btn-danger btn-sm reject-ot-btn" data-id="${l.ot.id}" style="font-size:10.5px;padding:3px 8px;">✕ Reject</button>`
+                : l.ot.status==='Pending Supervisor'
+                ? `<span style="font-size:10.5px;color:var(--muted);font-style:italic;">⏳ Awaiting approver</span>`
+                : ''
+              }
+            </div>`}
+        </td>
         <td style="font-size:11.5px;color:var(--muted);">
           ${l.time_in_distance_m!=null?`In: ${Math.round(l.time_in_distance_m)}m from office`:''}
           ${l.time_out_distance_m!=null?`<br>Out: ${Math.round(l.time_out_distance_m)}m from office`:''}
@@ -2692,86 +2706,12 @@ async function renderAttendance(content) {
   let attSearchTimer;
   document.getElementById('attSearch').addEventListener('input',e=>{S.attSearch=e.target.value; clearTimeout(attSearchTimer); attSearchTimer=setTimeout(()=>renderAttendance(content),300);});
   document.getElementById('attDateFilter').addEventListener('change',e=>{S.attDateFilter=e.target.value; renderAttendance(content);});
-  document.getElementById('exportAttBtn').addEventListener('click',()=>{
-    openExportModal({
-      title: 'Attendance Logs',
-      filters: [
-        {id:'name', label:'Employee Name (contains)', type:'text', placeholder:'e.g. Santos'},
-        {id:'from', label:'Date From', type:'date'},
-        {id:'to', label:'Date To', type:'date'},
-      ],
-      onExport: async (v)=>{
-        let q = sb.from('attendance_logs').select('*').order('log_date',{ascending:false});
-        if(v.name) q=q.ilike('emp_name',`%${v.name}%`);
-        if(v.from) q=q.gte('log_date',v.from);
-        if(v.to) q=q.lte('log_date',v.to);
-        const {data:logs}=await q;
-        if(!logs?.length){toast('No records found.');return;}
-        downloadCSV(`${S.company||'HRIS'}_attendance_${csvDate()}.csv`, toCSV(
-          ['Employee ID','Employee Name','Date','Time In','Time Out','Status','Time In Distance (m)','Time Out Distance (m)'],
-          logs.map(l=>[l.emp_id,l.emp_name,l.log_date,l.time_in?fmtTime12(l.time_in):'',l.time_out?fmtTime12(l.time_out):'',l.time_out?'Complete':'Incomplete',l.time_in_distance_m??'',l.time_out_distance_m??''])
-        )); toast(`${logs.length} attendance records exported.`);
-      }
-    });
-  });
-}
 
-function otStatusBadge(s){
-  return {
-    'Pending Supervisor':'badge-pending',
-    'Pending HR':'badge-leave',
-    'Approved':'badge-approved',
-    'Rejected':'badge-rejected'
-  }[s]||'badge-inactive';
-}
-
-async function renderOTRequestsTab(tabContent, pageContent) {
-  loading(tabContent);
-  let q = sb.from('ot_requests').select('*').order('filed_on',{ascending:false});
-  if (S.otSearch) q = q.ilike('emp_name', `%${S.otSearch}%`);
-  const {data:reqs} = await q;
-  const list = reqs||[];
-
-  tabContent.innerHTML = `
-    <div class="toolbar">
-      <div class="toolbar-left" style="flex:1;">
-        <div class="search-box" style="min-width:200px;"><span class="mono" style="font-size:13px;">&#8981;</span><input type="text" id="otSearch" placeholder="Search employee…" value="${S.otSearch||''}"></div>
-        <span class="mono" style="font-size:12px;color:var(--muted);">${list.length} request(s)</span>
-      </div>
-    </div>
-    ${list.length===0?`<div class="empty-state"><h4>No OT requests</h4><p>Overtime requests filed by employees will appear here.</p></div>`:`
-    <div class="table-wrap"><table>
-      <thead><tr><th>Employee</th><th>Date</th><th>Time</th><th>Hours</th><th>Reason</th><th>Approver</th><th>Status</th><th></th></tr></thead>
-      <tbody>${list.map(o=>`<tr>
-        <td><strong>${o.emp_name}</strong><br><span class="mono" style="font-size:11px;color:var(--muted);">${o.emp_id}</span></td>
-        <td class="mono">${fmtDate(o.ot_date)}</td>
-        <td class="mono" style="font-size:12px;">${fmtTimeRange(o.start_time,o.end_time)}</td>
-        <td>${o.hours}</td>
-        <td style="max-width:220px;">${o.reason||'—'}</td>
-        <td style="font-size:12px;">${o.supervisor_name||'—'}</td>
-        <td>
-          <span class="badge ${otStatusBadge(o.status)}">${o.status}</span>
-          ${o.status==='Rejected'&&o.rejection_reason?`<div style="font-size:11px;color:var(--rose);margin-top:3px;">${o.rejection_reason}</div>`:''}
-        </td>
-        <td style="white-space:nowrap;">
-          ${(o.status==='Pending HR') || (o.status==='Pending Supervisor' && !o.supervisor_id)
-            ? `<button class="btn btn-primary btn-sm hr-approve-ot-btn" data-id="${o.id}" style="font-size:11px;">✓ Approve</button>
-               <button class="btn btn-danger btn-sm reject-ot-btn" data-id="${o.id}" style="font-size:11px;">✕ Reject</button>`
-            : o.status==='Pending Supervisor'
-            ? `<span style="font-size:11px;color:var(--muted);font-style:italic;">⏳ Awaiting approver</span>`
-            : `<span style="font-size:11px;color:var(--muted);font-style:italic;">—</span>`
-          }
-        </td>
-      </tr>`).join('')}</tbody>
-    </table></div>`}`;
-
-  let otSearchTimer;
-  document.getElementById('otSearch').addEventListener('input',e=>{S.otSearch=e.target.value; clearTimeout(otSearchTimer); otSearchTimer=setTimeout(()=>renderOTRequestsTab(tabContent,pageContent),300);});
-  tabContent.querySelectorAll('.hr-approve-ot-btn').forEach(btn=>btn.addEventListener('click',async()=>{
+  content.querySelectorAll('.hr-approve-ot-btn').forEach(btn=>btn.addEventListener('click',async()=>{
     await sb.from('ot_requests').update({status:'Approved', hr_approved_at:new Date().toISOString()}).eq('id',btn.dataset.id);
-    toast('OT request approved.'); renderOTRequestsTab(tabContent,pageContent);
+    toast('OT request approved.'); renderAttendance(content);
   }));
-  tabContent.querySelectorAll('.reject-ot-btn').forEach(btn=>btn.addEventListener('click',()=>{
+  content.querySelectorAll('.reject-ot-btn').forEach(btn=>btn.addEventListener('click',()=>{
     openModal(`
       <div class="modal-tab-label">REJECT OT REQUEST</div>
       <div class="modal-head"><div><h3>Reject OT Request</h3></div><button class="modal-close" id="closeModalBtn">&times;</button></div>
@@ -2790,9 +2730,51 @@ async function renderOTRequestsTab(tabContent, pageContent) {
       const reason=document.getElementById('ot_reject_reason').value.trim();
       if(!reason){toast('Please enter a reason for rejection.');return;}
       await sb.from('ot_requests').update({status:'Rejected', rejection_reason:reason}).eq('id',btn.dataset.id);
-      closeModal(); toast('OT request rejected.'); renderOTRequestsTab(tabContent,pageContent);
+      closeModal(); toast('OT request rejected.'); renderAttendance(content);
     });
   }));
+
+  document.getElementById('exportAttBtn').addEventListener('click',()=>{
+    openExportModal({
+      title: 'Attendance Logs',
+      filters: [
+        {id:'name', label:'Employee Name (contains)', type:'text', placeholder:'e.g. Santos'},
+        {id:'from', label:'Date From', type:'date'},
+        {id:'to', label:'Date To', type:'date'},
+      ],
+      onExport: async (v)=>{
+        let lq = sb.from('attendance_logs').select('*').order('log_date',{ascending:false});
+        let oq = sb.from('ot_requests').select('*').order('ot_date',{ascending:false});
+        if(v.name) { lq=lq.ilike('emp_name',`%${v.name}%`); oq=oq.ilike('emp_name',`%${v.name}%`); }
+        if(v.from) { lq=lq.gte('log_date',v.from); oq=oq.gte('ot_date',v.from); }
+        if(v.to)   { lq=lq.lte('log_date',v.to);   oq=oq.lte('ot_date',v.to); }
+        const [{data:logs},{data:ots}] = await Promise.all([lq,oq]);
+        if(!logs?.length && !ots?.length){toast('No records found for the selected filters.');return;}
+        const exportMap = new Map();
+        (logs||[]).forEach(l => exportMap.set(`${l.emp_id}|${l.log_date}`, {...l, ot:null}));
+        (ots||[]).forEach(o => {
+          const key = `${o.emp_id}|${o.ot_date}`;
+          if(exportMap.has(key)) exportMap.get(key).ot = o;
+          else exportMap.set(key, { emp_id:o.emp_id, emp_name:o.emp_name, log_date:o.ot_date, time_in:null, time_out:null, ot:o });
+        });
+        const rows = Array.from(exportMap.values()).sort((a,b)=>(b.log_date||'').localeCompare(a.log_date||''));
+        const rangeLabel = v.from&&v.to ? `_${v.from}_to_${v.to}` : v.from ? `_from_${v.from}` : v.to ? `_to_${v.to}` : `_${csvDate()}`;
+        downloadCSV(`${S.company||'HRIS'}_attendance${rangeLabel}.csv`, toCSV(
+          ['Employee ID','Employee Name','Date','Time In','Time Out','Status','OT Hours','OT Status'],
+          rows.map(l=>[l.emp_id,l.emp_name,l.log_date,l.time_in?fmtTime12(l.time_in):'',l.time_out?fmtTime12(l.time_out):'',l.time_in?(l.time_out?'Complete':'Incomplete'):'',l.ot?l.ot.hours:'',l.ot?l.ot.status:''])
+        )); toast(`${rows.length} attendance records exported.`);
+      }
+    });
+  });
+}
+
+function otStatusBadge(s){
+  return {
+    'Pending Supervisor':'badge-pending',
+    'Pending HR':'badge-leave',
+    'Approved':'badge-approved',
+    'Rejected':'badge-rejected'
+  }[s]||'badge-inactive';
 }
 
 function openRejectModal(leaveId, onDone){

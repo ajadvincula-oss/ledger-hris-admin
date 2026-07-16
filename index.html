@@ -2288,6 +2288,27 @@ function startRealtime() {
           const content = document.getElementById('adminContent');
           if (content) renderAttendance(content);
         }
+        if (S.view === 'admin' && S.page === 'dashboard') {
+          const content = document.getElementById('adminContent');
+          if (content) renderDashboard(content);
+        }
+        if (S.view === 'employee' && S.empPage === 'attendance') {
+          const content = document.getElementById('empContent');
+          if (content && S.employee) renderEmpAttendance(content, S.employee);
+        }
+      });
+    })
+    .on('postgres_changes', { event: '*', schema: 'public', table: 'ot_requests' }, (payload) => {
+      showLiveToast('OT request updated');
+      debounceRefresh('ot', () => {
+        if (S.view === 'admin' && S.page === 'attendance') {
+          const content = document.getElementById('adminContent');
+          if (content) renderAttendance(content);
+        }
+        if (S.view === 'admin' && S.page === 'dashboard') {
+          const content = document.getElementById('adminContent');
+          if (content) renderDashboard(content);
+        }
         if (S.view === 'employee' && S.empPage === 'attendance') {
           const content = document.getElementById('empContent');
           if (content && S.employee) renderEmpAttendance(content, S.employee);

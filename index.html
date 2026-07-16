@@ -1658,7 +1658,7 @@ async function renderDashboard(content) {
     sb.from('evaluations').select('emp_id,rating'),
     sb.from('violations').select('id'),
     sb.from('evaluations').select('emp_id'),
-    sb.from('attendance_logs').select('emp_id').eq('log_date', todayStr()),
+    sb.from('attendance_logs').select('emp_id').eq('log_date', new Date().toISOString().slice(0,10)),
     sb.from('ot_requests').select('id,emp_name,hours,ot_date,status').in('status',['Pending Supervisor','Pending HR'])
   ]);
 
@@ -2607,7 +2607,6 @@ async function openEmpForm(empId, content) {
 async function renderAttendance(content) {
   loading(content);
   const hasWorkLoc = S.workLat!=null && S.workLng!=null;
-  const filterDate = S.attDateFilter || todayStr();
 
   content.innerHTML = `
     <div class="page-header"><p class="desc">Real-time employee time in/out logs, verified by GPS location, plus overtime request approvals.</p></div>
@@ -2628,14 +2627,8 @@ async function renderAttendance(content) {
   let q = sb.from('attendance_logs').select('*').order('log_date',{ascending:false}).order('time_in',{ascending:false});
   if (S.attSearch) q = q.ilike('emp_name', `%${S.attSearch}%`);
   if (S.attDateFilter) q = q.eq('log_date', S.attDateFilter);
-  const [{data:logs}, {data:activeEmps}, {data:dateLogs}] = await Promise.all([
-    q,
-    sb.from('employees').select('id,full_name,department').eq('status','Active'),
-    sb.from('attendance_logs').select('emp_id').eq('log_date', filterDate)
-  ]);
+  const {data:logs} = await q;
   const list = logs||[];
-  const loggedIds = new Set((dateLogs||[]).map(l=>l.emp_id));
-  const noLogEmps = (activeEmps||[]).filter(e=>!loggedIds.has(e.id));
 
   tabContent.innerHTML = `
     <div class="toolbar">
@@ -2646,27 +2639,6 @@ async function renderAttendance(content) {
       </div>
       <button class="btn btn-outline" id="exportAttBtn">⬇ Export CSV</button>
     </div>
-    ${noLogEmps.length>0 ? `
-    <div class="alert-grid" style="margin-bottom:18px;">
-      <div class="alert-tile" style="border-left:4px solid var(--rose);">
-        <div class="alert-tile-header" style="background:var(--rose-bg);">
-          <div style="display:flex;align-items:center;gap:10px;">
-            <span style="font-size:22px;">⏰</span>
-            <div>
-              <div style="font-weight:700;font-size:14px;color:var(--ink);">No Attendance Log</div>
-              <div style="font-size:11.5px;color:var(--muted);margin-top:2px;">Active employees with no time-in on ${fmtDate(filterDate)}</div>
-            </div>
-          </div>
-          <div class="alert-count" style="background:var(--rose);">${noLogEmps.length}</div>
-        </div>
-        <div class="alert-tile-body">
-          ${noLogEmps.slice(0,8).map(e=>`<div class="alert-item">
-            <div class="alert-item-info"><strong>${e.full_name}</strong><span>${e.department||'—'}</span></div>
-          </div>`).join('')}
-          ${noLogEmps.length > 8 ? `<div style="font-size:12px;color:var(--muted);padding:8px 0;text-align:center;">+${noLogEmps.length-8} more</div>` : ''}
-        </div>
-      </div>
-    </div>` : ''}
     ${list.length===0?`<div class="empty-state"><h4>No attendance logs found</h4><p>Time-in records will appear here once employees start logging attendance.</p></div>`:`
     <div class="table-wrap"><table>
       <thead><tr><th>Employee</th><th>Date</th><th>Time In</th><th>Time Out</th><th>Status</th><th>Location Check</th></tr></thead>

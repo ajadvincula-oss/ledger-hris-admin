@@ -1245,7 +1245,7 @@ function saveSession() {
       view: S.view,
       page: S.page,
       empPage: S.empPage,
-      admin: S.admin ? {id:S.admin.id, username:S.admin.username, name:S.admin.name, role:S.admin.role, modules:S.admin.modules} : null,
+      admin: S.admin ? {id:S.admin.id, username:S.admin.username, name:S.admin.name, role:S.admin.role, modules:S.admin.modules, photo:S.admin.photo} : null,
       employee: S.employee ? {id:S.employee.id, full_name:S.employee.full_name, department:S.employee.department, position:S.employee.position, photo:S.employee.photo, prorated_leave:S.employee.prorated_leave, birth_date:S.employee.birth_date, hire_date:S.employee.hire_date, pin:S.employee.pin, must_change_pin:S.employee.must_change_pin} : null,
       ts: Date.now()
     };
@@ -1612,7 +1612,10 @@ function renderAdminShell() {
     ${S.logo ? `<img src="${S.logo}" style="height:44px;object-fit:contain;margin-bottom:12px;filter:brightness(1.15) drop-shadow(0 2px 8px rgba(255,255,255,0.2));">` : ''}
     <div class="mark">${S.company||'Ledger'} <small>HRIS</small></div>
     <div class="sub">HUMAN RESOURCES</div>
-    ${S.admin ? `<div style="margin-top:8px;font-size:11px;color:rgba(140,165,190,0.8);font-family:'JetBrains Mono',monospace;">👤 ${S.admin.name}</div>` : ''}`;
+    ${S.admin ? `<div style="margin-top:10px;display:flex;align-items:center;gap:8px;">
+      ${S.admin.photo?`<img src="${S.admin.photo}" style="width:26px;height:26px;border-radius:50%;object-fit:cover;">`:`<span style="font-size:13px;">👤</span>`}
+      <span style="font-size:11px;color:rgba(140,165,190,0.8);font-family:'JetBrains Mono',monospace;">${S.admin.name}</span>
+    </div>` : ''}`;
 
   const allowedModules = S.admin?.role==='Super Admin' ? MODULES
     : (S.admin?.modules ? S.admin.modules.split(',') : MODULES);
@@ -4191,6 +4194,30 @@ async function renderSettings(content) {
   content.innerHTML=`
     <div class="page-header"><p class="desc">Manage company profile, admin accounts, and system settings.</p></div>
 
+    <div class="record-card" style="padding:22px 24px;max-width:520px;margin-bottom:24px;">
+      <div class="record-tab">MY ACCOUNT</div>
+      <div style="margin-top:12px;display:flex;align-items:center;gap:14px;margin-bottom:16px;">
+        ${S.admin?.photo?`<img src="${S.admin.photo}" style="width:56px;height:56px;border-radius:50%;object-fit:cover;border:2px solid var(--line-strong);">`:`<div class="avatar" style="width:56px;height:56px;font-size:18px;">${ini(S.admin?.name||'?')}</div>`}
+        <div>
+          <div style="font-weight:600;font-size:14px;">${S.admin?.name||''}</div>
+          <div style="font-size:12px;color:var(--muted);">${S.admin?.role||''}</div>
+          <label style="display:inline-flex;align-items:center;gap:6px;margin-top:6px;cursor:pointer;padding:5px 10px;border:1px dashed var(--line-strong);border-radius:var(--radius);font-size:11.5px;color:var(--muted);background:var(--card);">
+            📷 ${S.admin?.photo?'Change Photo':'Upload Photo'}
+            <input type="file" id="myPhotoUpload" accept="image/*" style="display:none;">
+          </label>
+          ${S.admin?.photo?`<button class="btn btn-danger btn-sm" id="myPhotoRemove" style="margin-left:6px;font-size:11px;">Remove</button>`:''}
+        </div>
+      </div>
+      <div style="border-top:1px solid var(--line);padding-top:14px;">
+        <div style="font-size:12px;font-weight:600;color:var(--muted);text-transform:uppercase;letter-spacing:0.04em;margin-bottom:10px;">Change My Password</div>
+        <div class="field"><label>Current Password</label><input type="password" id="myPassCurrent" placeholder="Current password"></div>
+        <div class="field"><label>New Password</label><input type="password" id="myPassNew" placeholder="New password"></div>
+        <div class="field"><label>Confirm New Password</label><input type="password" id="myPassConfirm" placeholder="Re-enter new password"></div>
+        <div id="myPassErr" style="display:none;" class="login-error"></div>
+        <button class="btn btn-primary btn-sm" id="saveMyPassBtn">Change Password</button>
+      </div>
+    </div>
+
     ${isSuperAdmin ? `
     <div class="record-card" style="padding:22px 24px;max-width:520px;margin-bottom:24px;">
       <div class="record-tab">COMPANY PROFILE</div>
@@ -4263,6 +4290,33 @@ async function renderSettings(content) {
       <button class="btn btn-danger btn-sm" id="resetAllDataBtn">Reset All Data</button>
       <div style="font-size:11px;color:var(--muted);margin-top:6px;">Permanently deletes all employees, leave, evaluations, violations, documents, employment history, medical records, attendance, and OT records — restoring the system to a blank setup. This cannot be undone.</div>
     </div>` : ''}`;
+
+  document.getElementById('myPhotoUpload').addEventListener('change', e => {
+    const file = e.target.files[0]; if(!file) return;
+    const reader = new FileReader();
+    reader.onload = async ev => {
+      await sb.from('admin_accounts').update({photo:ev.target.result}).eq('id',S.admin.id);
+      S.admin.photo = ev.target.result; saveSession(); toast('Photo updated.'); renderSettings(content);
+    };
+    reader.readAsDataURL(file);
+  });
+  document.getElementById('myPhotoRemove')?.addEventListener('click', async () => {
+    await sb.from('admin_accounts').update({photo:null}).eq('id',S.admin.id);
+    S.admin.photo = null; saveSession(); toast('Photo removed.'); renderSettings(content);
+  });
+  document.getElementById('saveMyPassBtn').addEventListener('click', async () => {
+    const curr=document.getElementById('myPassCurrent').value, n1=document.getElementById('myPassNew').value, n2=document.getElementById('myPassConfirm').value;
+    const errEl=document.getElementById('myPassErr');
+    errEl.style.display='none';
+    if(curr!==S.admin.password_hash){ errEl.textContent='Current password is incorrect.'; errEl.style.display='block'; return; }
+    if(!n1||n1.length<4){ errEl.textContent='New password must be at least 4 characters.'; errEl.style.display='block'; return; }
+    if(n1!==n2){ errEl.textContent='New passwords do not match.'; errEl.style.display='block'; return; }
+    const btn=document.getElementById('saveMyPassBtn'); btn.disabled=true; btn.innerHTML='<span class="spinner"></span>';
+    await sb.from('admin_accounts').update({password_hash:n1}).eq('id',S.admin.id);
+    S.admin.password_hash=n1; toast('Password changed successfully.');
+    btn.disabled=false; btn.innerHTML='Change Password';
+    document.getElementById('myPassCurrent').value=''; document.getElementById('myPassNew').value=''; document.getElementById('myPassConfirm').value='';
+  });
 
   if(isSuperAdmin){
     let newLogoData='';
@@ -4396,6 +4450,16 @@ async function openAdminForm(accountId, content) {
     <div class="modal-head"><div><h3>${acc?'Edit':'Add'} Admin Account</h3></div><button class="modal-close" id="closeModalBtn">&times;</button></div>
     <div class="modal-body"><div class="form-grid">
       <div class="field field-full"><label>Full Name</label><input type="text" id="aa_name" value="${acc?.name||''}" placeholder="e.g. Maria Santos"></div>
+      <div class="field field-full">
+        <label>Photo <span style="font-weight:400;color:var(--muted);">(optional)</span></label>
+        <div style="display:flex;align-items:center;gap:12px;">
+          ${acc?.photo?`<img src="${acc.photo}" style="width:56px;height:56px;border-radius:50%;object-fit:cover;border:2px solid var(--line-strong);">`:`<div class="avatar" style="width:56px;height:56px;font-size:18px;">${ini(acc?.name||'?')}</div>`}
+          <div>
+            <input type="file" id="aa_photo" accept="image/*" style="font-size:12px;">
+            ${acc?.photo?`<button type="button" class="btn btn-danger btn-sm" id="aa_photo_remove" style="margin-top:6px;font-size:11px;">Remove Photo</button>`:''}
+          </div>
+        </div>
+      </div>
       <div class="field"><label>Username</label><input type="text" id="aa_user" value="${acc?.username||''}" placeholder="e.g. maria.santos" autocomplete="off"></div>
       <div class="field"><label>Role</label><select id="aa_role">${ROLES.map(r=>`<option ${acc?.role===r?'selected':''}>${r}</option>`).join('')}</select></div>
       <div class="field"><label>${acc?'New Password (blank = keep)':'Password'}</label><input type="password" id="aa_pass" autocomplete="new-password"></div>
@@ -4428,6 +4492,18 @@ async function openAdminForm(accountId, content) {
   roleEl.addEventListener('change',toggleModules);
   toggleModules();
 
+  let newPhotoData = acc?.photo || null;
+  document.getElementById('aa_photo').addEventListener('change', e => {
+    const file = e.target.files[0]; if(!file) return;
+    const reader = new FileReader();
+    reader.onload = ev => { newPhotoData = ev.target.result; };
+    reader.readAsDataURL(file);
+  });
+  document.getElementById('aa_photo_remove')?.addEventListener('click', () => {
+    newPhotoData = '';
+    toast('Photo will be removed when you save.');
+  });
+
   document.getElementById('saveAdminBtn').addEventListener('click',async()=>{
     const name=document.getElementById('aa_name').value.trim(), username=document.getElementById('aa_user').value.trim();
     const role=document.getElementById('aa_role').value, pass=document.getElementById('aa_pass').value, pass2=document.getElementById('aa_pass2').value;
@@ -4435,7 +4511,7 @@ async function openAdminForm(accountId, content) {
     if(!acc&&!pass){toast('Password is required for new accounts.');return;}
     if(pass&&pass!==pass2){toast('Passwords do not match.');return;}
     const selectedModules=[...document.querySelectorAll('.mod-check:checked')].map(cb=>cb.value).join(',');
-    const payload={name,username,role,modules:role==='Super Admin'?MODULES.join(','):selectedModules};
+    const payload={name,username,role,modules:role==='Super Admin'?MODULES.join(','):selectedModules, photo:newPhotoData||null};
     if(pass) payload.password_hash=pass;
     if(acc){await sb.from('admin_accounts').update(payload).eq('id',acc.id);}else{await sb.from('admin_accounts').insert(payload);}
     closeModal(); toast(acc?'Account updated.':'Account added.'); renderSettings(content);

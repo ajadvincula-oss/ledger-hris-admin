@@ -2098,12 +2098,20 @@ async function refreshEHTable(content) {
         <td style="color:var(--muted);">${r.previous_details||'—'}</td><td><strong>${r.new_details||'—'}</strong></td>
         <td>${r.approved_by||'—'}</td><td style="color:var(--muted);">${r.remarks||'—'}</td>
         <td style="white-space:nowrap;">
+          ${r.file_name?(r.file_name.startsWith('gdrive:')?`<a href="${r.file_name.replace('gdrive:','')}" target="_blank" class="btn btn-outline btn-sm" style="font-size:11px;" onclick="event.stopPropagation()">🔗 Drive</a> `:`<button class="btn btn-outline btn-sm dl-eh-btn" data-id="${r.id}" style="font-size:11px;">⬇ ${(r.file_name||'').slice(0,10)}</button> `):''}
           <button class="btn btn-outline btn-sm edit-eh-btn" data-id="${r.id}">Edit</button>
           <button class="btn btn-danger btn-sm del-eh-btn" data-id="${r.id}">Delete</button>
         </td>
       </tr>`).join('');
   tbody.querySelectorAll('.edit-eh-btn').forEach(btn=>btn.addEventListener('click',e=>{e.stopPropagation();openEHForm(btn.dataset.id,content);}));
   tbody.querySelectorAll('.del-eh-btn').forEach(btn=>btn.addEventListener('click',async e=>{ e.stopPropagation(); await sb.from('employment_history').delete().eq('id',btn.dataset.id); toast('Record deleted.'); renderEmpHistory(content); }));
+  tbody.querySelectorAll('.dl-eh-btn').forEach(btn=>btn.addEventListener('click',async e=>{
+    e.stopPropagation();
+    const {data:r}=await sb.from('employment_history').select('file_data,file_name').eq('id',btn.dataset.id).single();
+    if(!r?.file_data) return;
+    const a=document.createElement('a'); a.href=r.file_data; a.download=r.file_name||'employment_record';
+    document.body.appendChild(a); a.click(); document.body.removeChild(a);
+  }));
   tbody.querySelectorAll('tr[data-id]').forEach(row=>row.addEventListener('click',()=>openEHForm(row.dataset.id,content)));
 }
 
@@ -3350,14 +3358,8 @@ async function openEvalForm(evalId, content) {
       <div class="field"><label>Evaluated By</label><input type="text" id="ev_by" value="${ev?.evaluator||S.admin?.name||''}"></div>
       <div class="field field-full"><label>Comments</label><textarea id="ev_comments" rows="2">${ev?.comments||''}</textarea></div>
       <div class="field field-full">
-        <label>Attach File <span style="font-weight:400;color:var(--muted);">(optional — e.g. evaluation form PDF)</span></label>
-        ${ev?.file_data
-          ? `<div style="display:flex;align-items:center;gap:8px;margin-bottom:6px;">
-              <span style="font-size:12px;color:var(--teal);">📎 ${ev.file_name||'file attached'}</span>
-              <button type="button" class="btn btn-danger btn-sm" id="rmEvalFileBtn" style="font-size:11px;">Remove</button>
-            </div>`
-          : ''}
-        <input type="file" id="ev_file" accept=".pdf,.jpg,.jpeg,.png,.doc,.docx,.xlsx" style="padding:6px;">
+        <label>Attach File or Link <span style="font-weight:400;color:var(--muted);">(optional — e.g. evaluation form PDF)</span></label>
+        ${fileOrDriveInput('ev', ev?.file_data||null, ev?.file_name||null)}
       </div>
     </div></div>
     <div class="modal-foot"><button class="btn btn-outline" id="cancelEvalBtn">Cancel</button><button class="btn btn-primary" id="saveEvalBtn">${ev?'Save Changes':'Add Evaluation'}</button></div>`);
@@ -3664,6 +3666,7 @@ async function renderEmpHistory(content) {
         <td style="color:var(--muted);">${r.previous_details||'—'}</td><td><strong>${r.new_details||'—'}</strong></td>
         <td>${r.approved_by||'—'}</td><td style="color:var(--muted);">${r.remarks||'—'}</td>
         <td style="white-space:nowrap;">
+          ${r.file_name?(r.file_name.startsWith('gdrive:')?`<a href="${r.file_name.replace('gdrive:','')}" target="_blank" class="btn btn-outline btn-sm" style="font-size:11px;" onclick="event.stopPropagation()">🔗 Drive</a> `:`<button class="btn btn-outline btn-sm dl-eh-btn" data-id="${r.id}" style="font-size:11px;">⬇ ${(r.file_name||'').slice(0,10)}</button> `):''}
           <button class="btn btn-outline btn-sm edit-eh-btn" data-id="${r.id}">Edit</button>
           <button class="btn btn-danger btn-sm del-eh-btn" data-id="${r.id}">Delete</button>
         </td>
@@ -3700,6 +3703,13 @@ async function renderEmpHistory(content) {
   });
   content.querySelectorAll('.edit-eh-btn').forEach(btn=>btn.addEventListener('click',e=>{e.stopPropagation();openEHForm(btn.dataset.id,content);}));
   content.querySelectorAll('.del-eh-btn').forEach(btn=>btn.addEventListener('click',async e=>{ e.stopPropagation(); await sb.from('employment_history').delete().eq('id',btn.dataset.id); toast('Record deleted.'); renderEmpHistory(content); }));
+  content.querySelectorAll('.dl-eh-btn').forEach(btn=>btn.addEventListener('click',async e=>{
+    e.stopPropagation();
+    const {data:r}=await sb.from('employment_history').select('file_data,file_name').eq('id',btn.dataset.id).single();
+    if(!r?.file_data) return;
+    const a=document.createElement('a'); a.href=r.file_data; a.download=r.file_name||'employment_record';
+    document.body.appendChild(a); a.click(); document.body.removeChild(a);
+  }));
   content.querySelectorAll('tbody tr[data-id]').forEach(row=>row.addEventListener('click',()=>openEHForm(row.dataset.id,content)));
 }
 
@@ -3717,16 +3727,27 @@ async function openEHForm(recordId, content) {
       <div class="field"><label>New Details</label><input type="text" id="eh_new" value="${rec?.new_details||''}" placeholder="e.g. Regular / Senior Sales Associate"></div>
       <div class="field"><label>Approved By</label><input type="text" id="eh_approved" value="${rec?.approved_by||S.admin?.name||''}"></div>
       <div class="field field-full"><label>Remarks</label><textarea id="eh_remarks" rows="2">${rec?.remarks||''}</textarea></div>
+      <div class="field field-full">
+        <label>Attach File or Link <span style="font-weight:400;color:var(--muted);">(optional — e.g. promotion memo, regularization report)</span></label>
+        ${fileOrDriveInput('eh', rec?.file_data||null, rec?.file_name||null)}
+      </div>
     </div></div>
     <div class="modal-foot"><button class="btn btn-outline" id="cancelEHBtn">Cancel</button><button class="btn btn-primary" id="saveEHBtn">${rec?'Save Changes':'Add Record'}</button></div>`);
   document.getElementById('closeModalBtn').addEventListener('click',closeModal);
   document.getElementById('cancelEHBtn').addEventListener('click',closeModal);
   wireOthers('eh_type');
+  wireFileTabs();
+  document.querySelector('.rm-file-btn[data-field="eh"]')?.addEventListener('click',async()=>{
+    await sb.from('employment_history').update({file_data:null,file_name:null}).eq('id',rec.id);
+    rec.file_data=null; rec.file_name=null; toast('File removed.'); openEHForm(rec.id,content);
+  });
   document.getElementById('saveEHBtn').addEventListener('click',async()=>{
     const sel=document.getElementById('eh_emp');
     const empId=sel.value, empName=rec?rec.emp_name:sel.options[sel.selectedIndex]?.dataset.name||'';
     const date=document.getElementById('eh_date').value; if(!date){toast('Please enter an effective date.');return;}
     const payload={emp_id:rec?rec.emp_id:empId,emp_name:empName,effective_date:date,movement_type:getOthersValue('eh_type'),previous_details:document.getElementById('eh_prev').value.trim(),new_details:document.getElementById('eh_new').value.trim(),approved_by:document.getElementById('eh_approved').value.trim(),remarks:document.getElementById('eh_remarks').value.trim()};
+    const {fileData:ehFD, fileName:ehFN} = await getFileOrDriveValue('eh');
+    if(ehFD!==null||ehFN!==null){ payload.file_data=ehFD; payload.file_name=ehFN; }
     if(rec){await sb.from('employment_history').update(payload).eq('id',rec.id);}else{await sb.from('employment_history').insert({id:`EH-${Date.now()}`,...payload});}
     closeModal(); toast(rec?'Record updated.':'Record added.'); renderEmpHistory(content);
   });

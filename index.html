@@ -1163,8 +1163,10 @@ const S = { // app state
   workLat: null,
   workLng: null,
   workRadius: 100,
+  attTab: 'logs',
   attSearch: '',
   attDateFilter: '',
+  otSearch: '',
   adminLoginError: '',
   empLoginError: '',
   empSearch: '',
@@ -2551,17 +2553,38 @@ async function openEmpForm(empId, content) {
 /* ==================== ATTENDANCE ==================== */
 async function renderAttendance(content) {
   loading(content);
+  const hasWorkLoc = S.workLat!=null && S.workLng!=null;
+  const filterDate = S.attDateFilter || todayStr();
+
+  content.innerHTML = `
+    <div class="page-header"><p class="desc">Real-time employee time in/out logs, verified by GPS location, plus overtime request approvals.</p></div>
+    ${!hasWorkLoc ? `<div class="note-banner">⚠️ No work location has been set yet. Go to <strong>Settings</strong> to set the office coordinates — employees cannot time in/out until this is configured.</div>` : ''}
+    <div class="tabs">
+      <button class="tab-btn ${S.attTab==='logs'?'active':''}" id="attTabLogs">Time Logs</button>
+      <button class="tab-btn ${S.attTab==='ot'?'active':''}" id="attTabOT">OT Requests</button>
+    </div>
+    <div id="attTabContent"></div>`;
+
+  document.getElementById('attTabLogs').addEventListener('click',()=>{S.attTab='logs'; renderAttendance(content);});
+  document.getElementById('attTabOT').addEventListener('click',()=>{S.attTab='ot'; renderAttendance(content);});
+
+  const tabContent = document.getElementById('attTabContent');
+  if (S.attTab === 'ot') { await renderOTRequestsTab(tabContent, content); return; }
+
+  loading(tabContent);
   let q = sb.from('attendance_logs').select('*').order('log_date',{ascending:false}).order('time_in',{ascending:false});
   if (S.attSearch) q = q.ilike('emp_name', `%${S.attSearch}%`);
   if (S.attDateFilter) q = q.eq('log_date', S.attDateFilter);
-  const {data:logs} = await q;
+  const [{data:logs}, {data:activeEmps}, {data:dateLogs}] = await Promise.all([
+    q,
+    sb.from('employees').select('id,full_name,department').eq('status','Active'),
+    sb.from('attendance_logs').select('emp_id').eq('log_date', filterDate)
+  ]);
   const list = logs||[];
+  const loggedIds = new Set((dateLogs||[]).map(l=>l.emp_id));
+  const noLogEmps = (activeEmps||[]).filter(e=>!loggedIds.has(e.id));
 
-  const hasWorkLoc = S.workLat!=null && S.workLng!=null;
-
-  content.innerHTML = `
-    <div class="page-header"><p class="desc">Real-time employee time in/out logs, verified by GPS location.</p></div>
-    ${!hasWorkLoc ? `<div class="note-banner">⚠️ No work location has been set yet. Go to <strong>Settings</strong> to set the office coordinates — employees cannot time in/out until this is configured.</div>` : ''}
+  tabContent.innerHTML = `
     <div class="toolbar">
       <div class="toolbar-left" style="flex:1;flex-wrap:wrap;">
         <div class="search-box" style="min-width:200px;"><span class="mono" style="font-size:13px;">&#8981;</span><input type="text" id="attSearch" placeholder="Search employee…" value="${S.attSearch||''}"></div>
@@ -2570,6 +2593,13 @@ async function renderAttendance(content) {
       </div>
       <button class="btn btn-outline" id="exportAttBtn">⬇ Export CSV</button>
     </div>
+    ${noLogEmps.length>0 ? `
+    <div class="note-banner" style="align-items:flex-start;">
+      <div>
+        <strong>⚠️ ${noLogEmps.length} active employee(s) with no attendance log on ${fmtDate(filterDate)}:</strong>
+        <div style="margin-top:6px;">${noLogEmps.map(e=>`<span class="badge badge-inactive" style="margin:2px 4px 2px 0;">${e.full_name}${e.department?' · '+e.department:''}</span>`).join('')}</div>
+      </div>
+    </div>` : ''}
     ${list.length===0?`<div class="empty-state"><h4>No attendance logs found</h4><p>Time-in records will appear here once employees start logging attendance.</p></div>`:`
     <div class="table-wrap"><table>
       <thead><tr><th>Employee</th><th>Date</th><th>Time In</th><th>Time Out</th><th>Status</th><th>Location Check</th></tr></thead>
@@ -2611,6 +2641,84 @@ async function renderAttendance(content) {
       }
     });
   });
+}
+
+function otStatusBadge(s){
+  return {
+    'Pending Supervisor':'badge-pending',
+    'Pending HR':'badge-leave',
+    'Approved':'badge-approved',
+    'Rejected':'badge-rejected'
+  }[s]||'badge-inactive';
+}
+
+async function renderOTRequestsTab(tabContent, pageContent) {
+  loading(tabContent);
+  let q = sb.from('ot_requests').select('*').order('filed_on',{ascending:false});
+  if (S.otSearch) q = q.ilike('emp_name', `%${S.otSearch}%`);
+  const {data:reqs} = await q;
+  const list = reqs||[];
+
+  tabContent.innerHTML = `
+    <div class="toolbar">
+      <div class="toolbar-left" style="flex:1;">
+        <div class="search-box" style="min-width:200px;"><span class="mono" style="font-size:13px;">&#8981;</span><input type="text" id="otSearch" placeholder="Search employee…" value="${S.otSearch||''}"></div>
+        <span class="mono" style="font-size:12px;color:var(--muted);">${list.length} request(s)</span>
+      </div>
+    </div>
+    ${list.length===0?`<div class="empty-state"><h4>No OT requests</h4><p>Overtime requests filed by employees will appear here.</p></div>`:`
+    <div class="table-wrap"><table>
+      <thead><tr><th>Employee</th><th>Date</th><th>Hours</th><th>Reason</th><th>Approver</th><th>Status</th><th></th></tr></thead>
+      <tbody>${list.map(o=>`<tr>
+        <td><strong>${o.emp_name}</strong><br><span class="mono" style="font-size:11px;color:var(--muted);">${o.emp_id}</span></td>
+        <td class="mono">${fmtDate(o.ot_date)}</td>
+        <td>${o.hours}</td>
+        <td style="max-width:220px;">${o.reason||'—'}</td>
+        <td style="font-size:12px;">${o.supervisor_name||'—'}</td>
+        <td>
+          <span class="badge ${otStatusBadge(o.status)}">${o.status}</span>
+          ${o.status==='Rejected'&&o.rejection_reason?`<div style="font-size:11px;color:var(--rose);margin-top:3px;">${o.rejection_reason}</div>`:''}
+        </td>
+        <td style="white-space:nowrap;">
+          ${(o.status==='Pending HR') || (o.status==='Pending Supervisor' && !o.supervisor_id)
+            ? `<button class="btn btn-primary btn-sm hr-approve-ot-btn" data-id="${o.id}" style="font-size:11px;">✓ Approve</button>
+               <button class="btn btn-danger btn-sm reject-ot-btn" data-id="${o.id}" style="font-size:11px;">✕ Reject</button>`
+            : o.status==='Pending Supervisor'
+            ? `<span style="font-size:11px;color:var(--muted);font-style:italic;">⏳ Awaiting approver</span>`
+            : `<span style="font-size:11px;color:var(--muted);font-style:italic;">—</span>`
+          }
+        </td>
+      </tr>`).join('')}</tbody>
+    </table></div>`}`;
+
+  let otSearchTimer;
+  document.getElementById('otSearch').addEventListener('input',e=>{S.otSearch=e.target.value; clearTimeout(otSearchTimer); otSearchTimer=setTimeout(()=>renderOTRequestsTab(tabContent,pageContent),300);});
+  tabContent.querySelectorAll('.hr-approve-ot-btn').forEach(btn=>btn.addEventListener('click',async()=>{
+    await sb.from('ot_requests').update({status:'Approved', hr_approved_at:new Date().toISOString()}).eq('id',btn.dataset.id);
+    toast('OT request approved.'); renderOTRequestsTab(tabContent,pageContent);
+  }));
+  tabContent.querySelectorAll('.reject-ot-btn').forEach(btn=>btn.addEventListener('click',()=>{
+    openModal(`
+      <div class="modal-tab-label">REJECT OT REQUEST</div>
+      <div class="modal-head"><div><h3>Reject OT Request</h3></div><button class="modal-close" id="closeModalBtn">&times;</button></div>
+      <div class="modal-body">
+        <div class="field"><label>Reason for Rejection <span style="color:var(--rose);">*</span></label>
+          <textarea id="ot_reject_reason" rows="3" placeholder="e.g. Not pre-approved, insufficient justification…" style="width:100%;padding:9px 11px;border:1px solid var(--line-strong);border-radius:var(--radius);font-size:13px;"></textarea>
+        </div>
+      </div>
+      <div class="modal-foot">
+        <button class="btn btn-outline" id="cancelOTRejectBtn">Cancel</button>
+        <button class="btn btn-danger" id="confirmOTRejectBtn">Confirm Rejection</button>
+      </div>`);
+    document.getElementById('closeModalBtn').addEventListener('click',closeModal);
+    document.getElementById('cancelOTRejectBtn').addEventListener('click',closeModal);
+    document.getElementById('confirmOTRejectBtn').addEventListener('click',async()=>{
+      const reason=document.getElementById('ot_reject_reason').value.trim();
+      if(!reason){toast('Please enter a reason for rejection.');return;}
+      await sb.from('ot_requests').update({status:'Rejected', rejection_reason:reason}).eq('id',btn.dataset.id);
+      closeModal(); toast('OT request rejected.'); renderOTRequestsTab(tabContent,pageContent);
+    });
+  }));
 }
 
 function openRejectModal(leaveId, onDone){
@@ -3965,6 +4073,7 @@ async function renderSettings(content) {
         <div id="cs_loc_status" style="font-size:11.5px;color:var(--muted);margin-top:6px;"></div>
         <div id="cs_loc_ok" style="display:none;margin-top:10px;" class="note-banner">&#10003; Work location saved.</div>
         <button class="btn btn-primary" id="saveWorkLocBtn" style="margin-top:12px;">Save Work Location</button>
+        <button class="btn btn-outline" id="resetWorkLocBtn" style="margin-top:12px;">Reset</button>
       </div>
     </div>` : `
     <div class="record-card" style="padding:18px 22px;max-width:520px;margin-bottom:24px;border:1px dashed var(--line-strong);">
@@ -4052,6 +4161,23 @@ async function renderSettings(content) {
       S.workLat=lat; S.workLng=lng; S.workRadius=radius;
       const ok=document.getElementById('cs_loc_ok'); ok.style.display='flex'; setTimeout(()=>{ok.style.display='none';},2000);
       toast('Work location saved.');
+    });
+    document.getElementById('resetWorkLocBtn')?.addEventListener('click', async()=>{
+      const btn=document.getElementById('resetWorkLocBtn');
+      if(btn.dataset.confirming==='true'){
+        await Promise.all([
+          saveSetting('work_location_lat', ''),
+          saveSetting('work_location_lng', ''),
+          saveSetting('work_location_radius', '100')
+        ]);
+        S.workLat=null; S.workLng=null; S.workRadius=100;
+        toast('Work location reset. Employees cannot time in/out until it is set again.');
+        renderSettings(content);
+      } else {
+        btn.dataset.confirming='true'; btn.textContent='Click again to confirm';
+        btn.style.cssText='background:var(--rose);color:#fff;border-color:var(--rose);';
+        setTimeout(()=>{if(btn){btn.dataset.confirming='false';btn.textContent='Reset';btn.style.cssText='';}},3000);
+      }
     });
     document.getElementById('addAdminBtn').addEventListener('click',()=>openAdminForm(null,content));
     content.querySelectorAll('.edit-admin-btn').forEach(btn=>btn.addEventListener('click',()=>openAdminForm(btn.dataset.id,content)));
@@ -4461,9 +4587,15 @@ async function renderEmpOverview(content, emp) {
 async function renderEmpAttendance(content, emp) {
   loading(content);
   const today = todayStr();
-  const {data:todayLog} = await sb.from('attendance_logs').select('*').eq('emp_id',emp.id).eq('log_date',today).maybeSingle();
-  const {data:history} = await sb.from('attendance_logs').select('*').eq('emp_id',emp.id).order('log_date',{ascending:false}).limit(30);
+  const [{data:todayLog}, {data:history}, {data:myOT}, {data:pendingOT}] = await Promise.all([
+    sb.from('attendance_logs').select('*').eq('emp_id',emp.id).eq('log_date',today).maybeSingle(),
+    sb.from('attendance_logs').select('*').eq('emp_id',emp.id).order('log_date',{ascending:false}).limit(30),
+    sb.from('ot_requests').select('*').eq('emp_id',emp.id).order('filed_on',{ascending:false}),
+    sb.from('ot_requests').select('*').eq('status','Pending Supervisor').or(`supervisor_id.eq.${emp.id},supervisor_name.ilike.%${emp.full_name}%`)
+  ]);
   const list = history||[];
+  const otList = myOT||[];
+  const pendingOTList = pendingOT||[];
   const hasWorkLoc = S.workLat!=null && S.workLng!=null;
 
   content.innerHTML = `
@@ -4488,7 +4620,41 @@ async function renderEmpAttendance(content, emp) {
       <div id="att_status" style="font-size:12px;color:var(--muted);margin-top:10px;"></div>
     </div>
 
-    <div class="section-label">Recent Attendance</div>
+    ${pendingOTList.length>0 ? `
+    <div style="background:var(--gold-bg);border:1px solid var(--gold-border);border-radius:var(--radius-lg);padding:16px 18px;margin-bottom:14px;box-shadow:var(--shadow-sm);">
+      <div style="font-family:'JetBrains Mono',monospace;font-size:10.5px;text-transform:uppercase;letter-spacing:0.08em;color:var(--gold);margin-bottom:12px;font-weight:600;">
+        ⏳ OT Requests Pending Your Approval (${pendingOTList.length})
+      </div>
+      ${pendingOTList.map(o=>`
+        <div style="display:flex;align-items:center;justify-content:space-between;padding:8px 0;border-bottom:1px solid rgba(193,127,42,0.2);gap:12px;font-size:13px;">
+          <div>
+            <strong>${o.emp_name}</strong>
+            <span style="color:var(--muted);"> — ${o.hours} hr(s) on ${fmtDate(o.ot_date)}${o.reason?' · '+o.reason:''}</span>
+          </div>
+          <div style="display:flex;gap:6px;flex-shrink:0;">
+            <button class="btn btn-primary btn-sm ot-sup-app-btn" data-id="${o.id}" style="font-size:11px;">✓ Approve</button>
+            <button class="btn btn-danger btn-sm ot-sup-rej-btn" data-id="${o.id}" style="font-size:11px;">✕ Reject</button>
+          </div>
+        </div>`).join('')}
+    </div>` : ''}
+
+    <div class="toolbar"><div class="section-label" style="flex:1;margin-bottom:0;">My OT Requests</div><button class="btn btn-primary" id="fileOTBtn">+ File OT Request</button></div>
+    ${otList.length===0?`<div class="empty-state"><h4>No OT requests yet</h4></div>`:`
+    <div class="table-wrap"><table>
+      <thead><tr><th>Date</th><th>Hours</th><th>Reason</th><th>Approver</th><th>Status</th></tr></thead>
+      <tbody>${otList.map(o=>`<tr>
+        <td class="mono">${fmtDate(o.ot_date)}</td>
+        <td>${o.hours}</td>
+        <td>${o.reason||'—'}</td>
+        <td style="font-size:12px;">${o.supervisor_name||'—'}</td>
+        <td>
+          <span class="badge ${otStatusBadge(o.status)}">${o.status}</span>
+          ${o.status==='Rejected'&&o.rejection_reason?`<div style="font-size:11px;color:var(--rose);margin-top:3px;">${o.rejection_reason}</div>`:''}
+        </td>
+      </tr>`).join('')}</tbody>
+    </table></div>`}
+
+    <div class="section-label" style="margin-top:24px;">Recent Attendance</div>
     ${list.length===0?`<div class="empty-state"><h4>No attendance logs yet</h4></div>`:`
     <div class="table-wrap"><table>
       <thead><tr><th>Date</th><th>Time In</th><th>Time Out</th><th>Status</th></tr></thead>
@@ -4547,6 +4713,74 @@ async function renderEmpAttendance(content, emp) {
       statusEl.innerHTML = '⚠️ '+err.message; statusEl.style.color='var(--rose)';
       btn.disabled=false; btn.innerHTML='📍 Time Out';
     }
+  });
+
+  document.getElementById('fileOTBtn').addEventListener('click', ()=>openOTForm(content, emp));
+
+  content.querySelectorAll('.ot-sup-app-btn').forEach(btn=>btn.addEventListener('click', async()=>{
+    const {data:req} = await sb.from('ot_requests').select('supervisor_id').eq('id',btn.dataset.id).single();
+    const goesToHR = !req?.supervisor_id || req.supervisor_id.startsWith?.('HR-');
+    await sb.from('ot_requests').update({status: goesToHR?'Approved':'Pending HR', supervisor_approved_at:new Date().toISOString()}).eq('id',btn.dataset.id);
+    toast('OT request approved.'); renderEmpAttendance(content, emp);
+  }));
+  content.querySelectorAll('.ot-sup-rej-btn').forEach(btn=>btn.addEventListener('click', ()=>{
+    openModal(`
+      <div class="modal-tab-label">REJECT OT REQUEST</div>
+      <div class="modal-head"><div><h3>Reject OT Request</h3></div><button class="modal-close" id="closeModalBtn">&times;</button></div>
+      <div class="modal-body">
+        <div class="field"><label>Reason for Rejection <span style="color:var(--rose);">*</span></label>
+          <textarea id="ot_reject_reason" rows="3" placeholder="e.g. Not needed, insufficient justification…" style="width:100%;padding:9px 11px;border:1px solid var(--line-strong);border-radius:var(--radius);font-size:13px;"></textarea>
+        </div>
+      </div>
+      <div class="modal-foot">
+        <button class="btn btn-outline" id="cancelOTRejectBtn">Cancel</button>
+        <button class="btn btn-danger" id="confirmOTRejectBtn">Confirm Rejection</button>
+      </div>`);
+    document.getElementById('closeModalBtn').addEventListener('click',closeModal);
+    document.getElementById('cancelOTRejectBtn').addEventListener('click',closeModal);
+    document.getElementById('confirmOTRejectBtn').addEventListener('click', async()=>{
+      const reason=document.getElementById('ot_reject_reason').value.trim();
+      if(!reason){toast('Please enter a reason for rejection.');return;}
+      await sb.from('ot_requests').update({status:'Rejected', rejection_reason:reason}).eq('id',btn.dataset.id);
+      closeModal(); toast('OT request rejected.'); renderEmpAttendance(content, emp);
+    });
+  }));
+}
+
+async function openOTForm(content, emp) {
+  const supSelectHTML = await getSupervisorSelectHTML('ot_supervisor');
+  openModal(`
+    <div class="modal-tab-label">FILE OT REQUEST</div>
+    <div class="modal-head"><div><h3>File Overtime Request</h3></div><button class="modal-close" id="closeModalBtn">&times;</button></div>
+    <div class="modal-body"><div class="form-grid">
+      <div class="field"><label>Date</label><input type="date" id="ot_date" value="${todayStr()}"></div>
+      <div class="field"><label>Hours</label><input type="number" id="ot_hours" min="0.5" step="0.5" placeholder="e.g. 2"></div>
+      <div class="field field-full"><label>Immediate Supervisor / Manager <span style="color:var(--rose);">*</span></label>${supSelectHTML}</div>
+      <div class="field field-full"><label>Reason</label><textarea id="ot_reason" rows="3" placeholder="Briefly describe the reason for overtime"></textarea></div>
+    </div></div>
+    <div class="modal-foot"><button class="btn btn-outline" id="cancelOTBtn">Cancel</button><button class="btn btn-primary" id="submitOTBtn">Submit Request</button></div>`);
+  document.getElementById('closeModalBtn').addEventListener('click',closeModal);
+  document.getElementById('cancelOTBtn').addEventListener('click',closeModal);
+  document.getElementById('submitOTBtn').addEventListener('click', async()=>{
+    const date=document.getElementById('ot_date').value;
+    const hours=parseFloat(document.getElementById('ot_hours').value);
+    const supSel=document.getElementById('ot_supervisor');
+    const supervisorId=supSel.value;
+    const supervisorName=supSel.options[supSel.selectedIndex]?.dataset.name||supSel.value;
+    const isHRApprover=supervisorId.startsWith('HR-');
+    if(!date){toast('Please select a date.');return;}
+    if(!hours||hours<=0){toast('Please enter the number of OT hours.');return;}
+    if(!supervisorId){toast('Please select your supervisor/manager.');return;}
+    const btn=document.getElementById('submitOTBtn'); btn.disabled=true; btn.innerHTML='<span class="spinner"></span>';
+    const {error}=await sb.from('ot_requests').insert({
+      id:`OT-${Date.now()}`, emp_id:emp.id, emp_name:emp.full_name, ot_date:date, hours,
+      reason:document.getElementById('ot_reason').value.trim(),
+      status:isHRApprover?'Pending HR':'Pending Supervisor',
+      supervisor_name:supervisorName, supervisor_id:isHRApprover?null:supervisorId,
+      filed_on:todayStr()
+    });
+    if(error){ toast('Error: '+error.message); btn.disabled=false; btn.innerHTML='Submit Request'; return; }
+    closeModal(); toast('OT request submitted!'); renderEmpAttendance(content, emp);
   });
 }
 

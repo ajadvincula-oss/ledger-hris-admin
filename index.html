@@ -4207,7 +4207,7 @@ async function renderSettings(content) {
     <div class="record-card" style="padding:22px 24px;max-width:520px;margin-bottom:24px;">
       <div class="record-tab">MY ACCOUNT</div>
       <div style="margin-top:12px;display:flex;align-items:center;gap:14px;margin-bottom:16px;">
-        ${S.admin?.photo?`<img src="${S.admin.photo}" style="width:56px;height:56px;border-radius:50%;object-fit:cover;border:2px solid var(--line-strong);">`:`<div class="avatar" style="width:56px;height:56px;font-size:18px;">${ini(S.admin?.name||'?')}</div>`}
+        ${S.admin?.photo?`<img src="${S.admin.photo}" class="myacct-photo-thumb" data-photo="${S.admin.photo}" data-name="${S.admin.name||''}" style="width:56px;height:56px;border-radius:50%;object-fit:cover;border:2px solid var(--line-strong);cursor:pointer;">`:`<div class="avatar" style="width:56px;height:56px;font-size:18px;">${ini(S.admin?.name||'?')}</div>`}
         <div>
           <div style="font-weight:600;font-size:14px;">${S.admin?.name||''}</div>
           <div style="font-size:12px;color:var(--muted);">${S.admin?.role||''}</div>
@@ -4269,8 +4269,8 @@ async function renderSettings(content) {
       </div>
     </div>`}
 
-    <div class="section-label">Admin Accounts</div>
     ${isSuperAdmin ? `
+    <div class="section-label">Admin Accounts</div>
     <div class="table-wrap" style="max-width:680px;margin-bottom:12px;">
       <table><thead><tr><th>Name</th><th>Username</th><th>Role</th><th>Module Access</th><th></th></tr></thead>
       <tbody>${adminList.map(a=>`<tr>
@@ -4283,14 +4283,7 @@ async function renderSettings(content) {
       </tr>`).join('')}</tbody></table>
     </div>
     <button class="btn btn-primary btn-sm" id="addAdminBtn">+ Add Admin Account</button>
-    ` : `
-    <div style="font-size:13px;color:var(--muted);margin-bottom:16px;">Only Super Admins can add or manage admin accounts.</div>
-    <div class="table-wrap" style="max-width:680px;margin-bottom:12px;">
-      <table><thead><tr><th>Name</th><th>Username</th><th>Role</th></tr></thead>
-      <tbody>${adminList.map(a=>`<tr>
-        <td><strong>${a.name}</strong></td><td class="mono">${a.username}</td><td>${a.role}</td>
-      </tr>`).join('')}</tbody></table>
-    </div>`}
+    ` : ''}
 
     ${isSuperAdmin ? `
     <div style="margin-top:28px;padding-top:20px;border-top:1px solid var(--line);max-width:520px;">
@@ -4301,6 +4294,9 @@ async function renderSettings(content) {
       <div style="font-size:11px;color:var(--muted);margin-top:6px;">Permanently deletes all employees, leave, evaluations, violations, documents, employment history, medical records, attendance, and OT records — restoring the system to a blank setup. This cannot be undone.</div>
     </div>` : ''}`;
 
+  document.querySelector('.myacct-photo-thumb')?.addEventListener('click', e => {
+    openPhotoLightbox(e.target.dataset.photo, e.target.dataset.name);
+  });
   document.getElementById('myPhotoUpload').addEventListener('change', e => {
     const file = e.target.files[0]; if(!file) return;
     const reader = new FileReader();

@@ -1383,6 +1383,12 @@ function fmtTimeRange(start, end) {
   if (!start || !end) return '—';
   return fmtTimeStr(start) + ' – ' + fmtTimeStr(end);
 }
+function computeWorkedHours(timeIn, timeOut) {
+  if (!timeIn || !timeOut) return null;
+  const ms = new Date(timeOut) - new Date(timeIn);
+  if (ms <= 0) return null;
+  return Math.round((ms / 3600000) * 100) / 100; // hours, 2 decimal places
+}
 function todayStr() { return new Date().toISOString().slice(0,10); }
 // Haversine formula — distance in meters between two lat/lng points
 function distanceMeters(lat1, lng1, lat2, lng2) {
@@ -2674,13 +2680,14 @@ async function renderAttendance(content) {
     </div>
     ${list.length===0?`<div class="empty-state"><h4>No attendance logs found</h4><p>Time-in records will appear here once employees start logging attendance.</p></div>`:`
     <div class="table-wrap"><table>
-      <thead><tr><th>Employee</th><th>Date</th><th>Time In</th><th>Time Out</th><th>Status</th><th>Overtime</th><th>Location Check</th></tr></thead>
+      <thead><tr><th>Employee</th><th>Date</th><th>Time In</th><th>Time Out</th><th>Status</th><th>Hours Worked</th><th>Overtime</th><th>Location Check</th></tr></thead>
       <tbody>${list.map(l=>`<tr>
         <td><strong>${l.emp_name}</strong><br><span class="mono" style="font-size:11px;color:var(--muted);">${l.emp_id}</span></td>
         <td class="mono">${fmtDate(l.log_date)}</td>
         <td class="mono">${l.time_in?fmtTime12(l.time_in):'—'}</td>
         <td class="mono">${l.time_out?fmtTime12(l.time_out):'—'}</td>
         <td>${l.time_in?`<span class="badge ${l.time_out?'badge-approved':'badge-pending'}">${l.time_out?'Complete':'Incomplete'}</span>`:'—'}</td>
+        <td class="mono">${computeWorkedHours(l.time_in,l.time_out)!=null?computeWorkedHours(l.time_in,l.time_out)+' hr(s)':'—'}</td>
         <td style="white-space:nowrap;">
           ${!l.ot ? `<span style="font-size:11px;color:var(--muted);">—</span>` : `
             <div style="font-size:12px;">${l.ot.hours} hr(s)${l.ot.start_time&&l.ot.end_time?` · ${fmtTimeRange(l.ot.start_time,l.ot.end_time)}`:''}</div>
@@ -2760,8 +2767,8 @@ async function renderAttendance(content) {
         const rows = Array.from(exportMap.values()).sort((a,b)=>(b.log_date||'').localeCompare(a.log_date||''));
         const rangeLabel = v.from&&v.to ? `_${v.from}_to_${v.to}` : v.from ? `_from_${v.from}` : v.to ? `_to_${v.to}` : `_${csvDate()}`;
         downloadCSV(`${S.company||'HRIS'}_attendance${rangeLabel}.csv`, toCSV(
-          ['Employee ID','Employee Name','Date','Time In','Time Out','Status','OT Hours','OT Status'],
-          rows.map(l=>[l.emp_id,l.emp_name,l.log_date,l.time_in?fmtTime12(l.time_in):'',l.time_out?fmtTime12(l.time_out):'',l.time_in?(l.time_out?'Complete':'Incomplete'):'',l.ot?l.ot.hours:'',l.ot?l.ot.status:''])
+          ['Employee ID','Employee Name','Date','Time In','Time Out','Status','Hours Worked','OT Hours','OT Status'],
+          rows.map(l=>[l.emp_id,l.emp_name,l.log_date,l.time_in?fmtTime12(l.time_in):'',l.time_out?fmtTime12(l.time_out):'',l.time_in?(l.time_out?'Complete':'Incomplete'):'',computeWorkedHours(l.time_in,l.time_out)??'',l.ot?l.ot.hours:'',l.ot?l.ot.status:''])
         )); toast(`${rows.length} attendance records exported.`);
       }
     });

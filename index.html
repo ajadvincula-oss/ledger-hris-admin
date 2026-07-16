@@ -1729,25 +1729,6 @@ async function renderDashboard(content) {
 
   const alerts = [
     {
-      key:'attendance',
-      icon:'⏰',
-      color:'var(--rose)',
-      bg:'var(--rose-bg)',
-      border:'var(--rose-border)',
-      label:'No Attendance Log Today',
-      count:noLogToday.length,
-      subtitle:'Active employees without a time-in today',
-      items:noLogToday.slice(0,5),
-      renderItem: e=>`<div class="alert-item">
-        <div class="alert-item-info">
-          <strong>${e.full_name}</strong>
-          <span>${e.department||'—'}</span>
-        </div>
-      </div>`,
-      action: `onclick="document.querySelector('.nav-tab[data-page=attendance]').click()"`,
-      actionLabel:'Go to Attendance →'
-    },
-    {
       key:'ot',
       icon:'🕐',
       color:'var(--gold)',
@@ -1966,10 +1947,32 @@ async function renderDashboard(content) {
   // Today's attendance doughnut
   const presentToday = loggedTodayIds.size;
   const absentToday = noLogToday.length;
+  const presentEmpsToday = emps.filter(e=>loggedTodayIds.has(e.id));
   new Chart(document.getElementById('attTodayChart'),{
     type:'doughnut',
     data:{labels:['Present','No Log Yet'],datasets:[{data:[presentToday,absentToday],backgroundColor:['#0E7A6B','#C0392B'],borderWidth:0,hoverOffset:6}]},
-    options:{responsive:true,maintainAspectRatio:false,plugins:{legend:{position:'bottom',labels:{padding:14,font:{size:12}}}},cutout:'65%'}
+    options:{
+      responsive:true,maintainAspectRatio:false,
+      plugins:{legend:{position:'bottom',labels:{padding:14,font:{size:12}}}},
+      cutout:'65%',
+      onHover:(evt,elements)=>{ evt.native.target.style.cursor = elements.length ? 'pointer' : 'default'; },
+      onClick:(evt,elements)=>{
+        if(!elements.length) return;
+        const idx = elements[0].index;
+        const isPresent = idx===0;
+        const list = isPresent ? presentEmpsToday : noLogToday;
+        openModal(`
+          <div class="modal-tab-label">${isPresent?'PRESENT TODAY':'NO LOG TODAY'}</div>
+          <div class="modal-head"><div><h3>${isPresent?'Present':'No Attendance Log'}</h3><div class="sub">${fmtDate(new Date().toISOString().slice(0,10))} · ${list.length} employee(s)</div></div><button class="modal-close" id="closeModalBtn">&times;</button></div>
+          <div class="modal-body">
+            ${list.length===0?`<p style="color:var(--muted);font-size:13px;">No employees in this category.</p>`:`
+            <ul class="doc-checklist">${list.map(e=>`<li><span>${e.full_name}</span><span style="color:var(--muted);font-size:12px;">${e.department||'—'}</span></li>`).join('')}</ul>`}
+          </div>
+          <div class="modal-foot"><button class="btn btn-primary" id="closeAttListBtn">Close</button></div>`);
+        document.getElementById('closeModalBtn').addEventListener('click',closeModal);
+        document.getElementById('closeAttListBtn').addEventListener('click',closeModal);
+      }
+    }
   });
 }
 

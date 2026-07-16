@@ -1642,15 +1642,20 @@ async function renderDashboard(content) {
   const sixMonthsAgo = new Date(today); sixMonthsAgo.setMonth(sixMonthsAgo.getMonth() - 6);
   const ninetyDaysFromNow = new Date(today); ninetyDaysFromNow.setDate(ninetyDaysFromNow.getDate() + 90);
 
-  const [empRes, leaveRes, evalRes, violRes, allEvalRes] = await Promise.all([
+  const [empRes, leaveRes, evalRes, violRes, allEvalRes, attRes, otRes] = await Promise.all([
     sb.from('employees').select('*').eq('status','Active'),
     sb.from('leave_requests').select('*').or("status.in.(Pending Supervisor,Pending HR),cancellation_status.in.(Pending Approver,Pending HR)").order('filed_on',{ascending:false}),
     sb.from('evaluations').select('emp_id,rating'),
     sb.from('violations').select('id'),
-    sb.from('evaluations').select('emp_id')
+    sb.from('evaluations').select('emp_id'),
+    sb.from('attendance_logs').select('emp_id').eq('log_date', todayStr()),
+    sb.from('ot_requests').select('id,emp_name,hours,ot_date,status').in('status',['Pending Supervisor','Pending HR'])
   ]);
 
   const emps=empRes.data||[], pendingLeaves=leaveRes.data||[], evals=evalRes.data||[], viols=violRes.data||[], allEvals=allEvalRes.data||[];
+  const loggedTodayIds = new Set((attRes.data||[]).map(l=>l.emp_id));
+  const noLogToday = emps.filter(e=>!loggedTodayIds.has(e.id));
+  const pendingOT = otRes.data||[];
   const avgRating=evals.length?(evals.reduce((s,e)=>s+(parseFloat(e.rating)||0),0)/evals.length).toFixed(1):'—';
   const deptMap={};
   emps.forEach(e=>{ deptMap[e.department]=(deptMap[e.department]||0)+1; });
@@ -1711,6 +1716,44 @@ async function renderDashboard(content) {
     .in('cancellation_status',['Pending Approver','Pending HR'])).data||[] : [];
 
   const alerts = [
+    {
+      key:'attendance',
+      icon:'⏰',
+      color:'var(--rose)',
+      bg:'var(--rose-bg)',
+      border:'var(--rose-border)',
+      label:'No Attendance Log Today',
+      count:noLogToday.length,
+      subtitle:'Active employees without a time-in today',
+      items:noLogToday.slice(0,5),
+      renderItem: e=>`<div class="alert-item">
+        <div class="alert-item-info">
+          <strong>${e.full_name}</strong>
+          <span>${e.department||'—'}</span>
+        </div>
+      </div>`,
+      action: `onclick="document.querySelector('.nav-tab[data-page=attendance]').click()"`,
+      actionLabel:'Go to Attendance →'
+    },
+    {
+      key:'ot',
+      icon:'🕐',
+      color:'var(--gold)',
+      bg:'var(--gold-bg)',
+      border:'var(--gold-border)',
+      label:'Pending OT Requests',
+      count:pendingOT.length,
+      subtitle:'Awaiting supervisor or HR approval',
+      items:pendingOT.slice(0,5),
+      renderItem: o=>`<div class="alert-item">
+        <div class="alert-item-info">
+          <strong>${o.emp_name}</strong>
+          <span>${o.hours} hr(s) · ${fmtDate(o.ot_date)} · <span class="badge ${otStatusBadge(o.status)}" style="font-size:10px;">${o.status}</span></span>
+        </div>
+      </div>`,
+      action: `onclick="document.querySelector('.nav-tab[data-page=attendance]').click()"`,
+      actionLabel:'Go to Attendance →'
+    },
     {
       key:'leave',
       icon:'📋',
@@ -2594,10 +2637,24 @@ async function renderAttendance(content) {
       <button class="btn btn-outline" id="exportAttBtn">⬇ Export CSV</button>
     </div>
     ${noLogEmps.length>0 ? `
-    <div class="note-banner" style="align-items:flex-start;">
-      <div>
-        <strong>⚠️ ${noLogEmps.length} active employee(s) with no attendance log on ${fmtDate(filterDate)}:</strong>
-        <div style="margin-top:6px;">${noLogEmps.map(e=>`<span class="badge badge-inactive" style="margin:2px 4px 2px 0;">${e.full_name}${e.department?' · '+e.department:''}</span>`).join('')}</div>
+    <div class="alert-grid" style="margin-bottom:18px;">
+      <div class="alert-tile" style="border-left:4px solid var(--rose);">
+        <div class="alert-tile-header" style="background:var(--rose-bg);">
+          <div style="display:flex;align-items:center;gap:10px;">
+            <span style="font-size:22px;">⏰</span>
+            <div>
+              <div style="font-weight:700;font-size:14px;color:var(--ink);">No Attendance Log</div>
+              <div style="font-size:11.5px;color:var(--muted);margin-top:2px;">Active employees with no time-in on ${fmtDate(filterDate)}</div>
+            </div>
+          </div>
+          <div class="alert-count" style="background:var(--rose);">${noLogEmps.length}</div>
+        </div>
+        <div class="alert-tile-body">
+          ${noLogEmps.slice(0,8).map(e=>`<div class="alert-item">
+            <div class="alert-item-info"><strong>${e.full_name}</strong><span>${e.department||'—'}</span></div>
+          </div>`).join('')}
+          ${noLogEmps.length > 8 ? `<div style="font-size:12px;color:var(--muted);padding:8px 0;text-align:center;">+${noLogEmps.length-8} more</div>` : ''}
+        </div>
       </div>
     </div>` : ''}
     ${list.length===0?`<div class="empty-state"><h4>No attendance logs found</h4><p>Time-in records will appear here once employees start logging attendance.</p></div>`:`

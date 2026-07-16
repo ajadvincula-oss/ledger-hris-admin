@@ -1374,6 +1374,16 @@ function renderPage() { renderAdminShell(); }
 /* ==================== UTILS ==================== */
 function fmtDate(d) { if (!d) return '—'; return new Date(d).toLocaleDateString('en-US', {month:'short', day:'2-digit', year:'numeric'}); }
 function fmtTime12(ts) { if (!ts) return '—'; return new Date(ts).toLocaleTimeString('en-US', {hour:'numeric', minute:'2-digit', hour12:true}); }
+function fmtTimeStr(t) { // formats 'HH:MM' 24hr string to 12hr AM/PM
+  if (!t) return '—';
+  const [h,m] = t.split(':').map(Number);
+  const d = new Date(); d.setHours(h,m,0,0);
+  return d.toLocaleTimeString('en-US', {hour:'numeric', minute:'2-digit', hour12:true});
+}
+function fmtTimeRange(start, end) {
+  if (!start || !end) return '—';
+  return fmtTimeStr(start) + ' – ' + fmtTimeStr(end);
+}
 function todayStr() { return new Date().toISOString().slice(0,10); }
 // Haversine formula — distance in meters between two lat/lng points
 function distanceMeters(lat1, lng1, lat2, lng2) {
@@ -2725,10 +2735,11 @@ async function renderOTRequestsTab(tabContent, pageContent) {
     </div>
     ${list.length===0?`<div class="empty-state"><h4>No OT requests</h4><p>Overtime requests filed by employees will appear here.</p></div>`:`
     <div class="table-wrap"><table>
-      <thead><tr><th>Employee</th><th>Date</th><th>Hours</th><th>Reason</th><th>Approver</th><th>Status</th><th></th></tr></thead>
+      <thead><tr><th>Employee</th><th>Date</th><th>Time</th><th>Hours</th><th>Reason</th><th>Approver</th><th>Status</th><th></th></tr></thead>
       <tbody>${list.map(o=>`<tr>
         <td><strong>${o.emp_name}</strong><br><span class="mono" style="font-size:11px;color:var(--muted);">${o.emp_id}</span></td>
         <td class="mono">${fmtDate(o.ot_date)}</td>
+        <td class="mono" style="font-size:12px;">${fmtTimeRange(o.start_time,o.end_time)}</td>
         <td>${o.hours}</td>
         <td style="max-width:220px;">${o.reason||'—'}</td>
         <td style="font-size:12px;">${o.supervisor_name||'—'}</td>
@@ -4698,9 +4709,10 @@ async function renderEmpAttendance(content, emp) {
     <div class="toolbar"><div class="section-label" style="flex:1;margin-bottom:0;">My OT Requests</div><button class="btn btn-primary" id="fileOTBtn">+ File OT Request</button></div>
     ${otList.length===0?`<div class="empty-state"><h4>No OT requests yet</h4></div>`:`
     <div class="table-wrap"><table>
-      <thead><tr><th>Date</th><th>Hours</th><th>Reason</th><th>Approver</th><th>Status</th></tr></thead>
+      <thead><tr><th>Date</th><th>Time</th><th>Hours</th><th>Reason</th><th>Approver</th><th>Status</th></tr></thead>
       <tbody>${otList.map(o=>`<tr>
         <td class="mono">${fmtDate(o.ot_date)}</td>
+        <td class="mono" style="font-size:12px;">${fmtTimeRange(o.start_time,o.end_time)}</td>
         <td>${o.hours}</td>
         <td>${o.reason||'—'}</td>
         <td style="font-size:12px;">${o.supervisor_name||'—'}</td>
@@ -4804,33 +4816,67 @@ async function renderEmpAttendance(content, emp) {
   }));
 }
 
+function computeOTHours(startStr, endStr) {
+  if(!startStr || !endStr) return 0;
+  const [sh,sm] = startStr.split(':').map(Number);
+  const [eh,em] = endStr.split(':').map(Number);
+  let startMin = sh*60+sm, endMin = eh*60+em;
+  if(endMin <= startMin) endMin += 24*60; // crossed midnight
+  return Math.round(((endMin-startMin)/60)*2)/2; // round to nearest 0.5 hr
+}
+
 async function openOTForm(content, emp) {
   const supSelectHTML = await getSupervisorSelectHTML('ot_supervisor');
   openModal(`
     <div class="modal-tab-label">FILE OT REQUEST</div>
     <div class="modal-head"><div><h3>File Overtime Request</h3></div><button class="modal-close" id="closeModalBtn">&times;</button></div>
     <div class="modal-body"><div class="form-grid">
-      <div class="field"><label>Date</label><input type="date" id="ot_date" value="${todayStr()}"></div>
-      <div class="field"><label>Hours</label><input type="number" id="ot_hours" min="0.5" step="0.5" placeholder="e.g. 2"></div>
+      <div class="field field-full"><label>Date</label><input type="date" id="ot_date" value="${todayStr()}"></div>
+      <div class="field"><label>Start Time</label><input type="time" id="ot_start"></div>
+      <div class="field"><label>End Time</label><input type="time" id="ot_end"></div>
+      <div style="grid-column:1/-1;background:var(--cream-dim);border:1px solid var(--line);border-radius:var(--radius);padding:8px 14px;font-size:12px;color:var(--muted);margin-bottom:4px;">
+        Suggested: <strong id="ot_hours_display" style="font-family:'JetBrains Mono',monospace;color:var(--navy);">— hour(s)</strong>
+      </div>
+      <div class="field field-full"><label>Hours</label><input type="number" id="ot_hours" min="0.5" step="0.5" placeholder="e.g. 2"></div>
       <div class="field field-full"><label>Immediate Supervisor / Manager <span style="color:var(--rose);">*</span></label>${supSelectHTML}</div>
       <div class="field field-full"><label>Reason</label><textarea id="ot_reason" rows="3" placeholder="Briefly describe the reason for overtime"></textarea></div>
     </div></div>
     <div class="modal-foot"><button class="btn btn-outline" id="cancelOTBtn">Cancel</button><button class="btn btn-primary" id="submitOTBtn">Submit Request</button></div>`);
   document.getElementById('closeModalBtn').addEventListener('click',closeModal);
   document.getElementById('cancelOTBtn').addEventListener('click',closeModal);
+
+  const hoursInput = document.getElementById('ot_hours');
+  hoursInput.addEventListener('input', () => { hoursInput.dataset.userEdited = '1'; });
+  const updateHoursSuggestion = () => {
+    const startVal = document.getElementById('ot_start').value;
+    const endVal = document.getElementById('ot_end').value;
+    const display = document.getElementById('ot_hours_display');
+    if (startVal && endVal) {
+      const hrs = computeOTHours(startVal, endVal);
+      display.textContent = hrs > 0 ? hrs + ' hour(s)' : '—';
+      if (hrs > 0 && hoursInput.dataset.userEdited !== '1') hoursInput.value = hrs;
+    }
+  };
+  document.getElementById('ot_start').addEventListener('change', updateHoursSuggestion);
+  document.getElementById('ot_end').addEventListener('change', updateHoursSuggestion);
+
   document.getElementById('submitOTBtn').addEventListener('click', async()=>{
     const date=document.getElementById('ot_date').value;
-    const hours=parseFloat(document.getElementById('ot_hours').value);
+    const startTime=document.getElementById('ot_start').value;
+    const endTime=document.getElementById('ot_end').value;
+    const hours=parseFloat(hoursInput.value);
     const supSel=document.getElementById('ot_supervisor');
     const supervisorId=supSel.value;
     const supervisorName=supSel.options[supSel.selectedIndex]?.dataset.name||supSel.value;
     const isHRApprover=supervisorId.startsWith('HR-');
     if(!date){toast('Please select a date.');return;}
+    if(!startTime||!endTime){toast('Please enter both start and end time.');return;}
     if(!hours||hours<=0){toast('Please enter the number of OT hours.');return;}
     if(!supervisorId){toast('Please select your supervisor/manager.');return;}
     const btn=document.getElementById('submitOTBtn'); btn.disabled=true; btn.innerHTML='<span class="spinner"></span>';
     const {error}=await sb.from('ot_requests').insert({
       id:`OT-${Date.now()}`, emp_id:emp.id, emp_name:emp.full_name, ot_date:date, hours,
+      start_time:startTime, end_time:endTime,
       reason:document.getElementById('ot_reason').value.trim(),
       status:isHRApprover?'Pending HR':'Pending Supervisor',
       supervisor_name:supervisorName, supervisor_id:isHRApprover?null:supervisorId,

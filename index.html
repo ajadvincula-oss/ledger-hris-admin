@@ -1408,6 +1408,71 @@ function getCurrentLocation() {
     );
   });
 }
+// Opens the device camera (front-facing) so employees must take a live selfie
+// to time in/out — this makes GPS spoofing far less useful, since a photo of
+// the actual person at that moment is also required.
+function captureSelfie() {
+  return new Promise((resolve) => {
+    const input = document.createElement('input');
+    input.type = 'file';
+    input.accept = 'image/*';
+    input.capture = 'user';
+    input.style.display = 'none';
+    document.body.appendChild(input);
+    let settled = false;
+    const cleanup = () => { if (input.parentNode) document.body.removeChild(input); };
+    input.addEventListener('change', () => {
+      const file = input.files[0];
+      if (!file) { settled = true; cleanup(); resolve(null); return; }
+      const reader = new FileReader();
+      reader.onload = e => { settled = true; cleanup(); resolve(e.target.result); };
+      reader.onerror = () => { settled = true; cleanup(); resolve(null); };
+      reader.readAsDataURL(file);
+    });
+    // Some browsers don't fire 'change' reliably on cancel — fall back via window focus.
+    window.addEventListener('focus', function onFocus() {
+      window.removeEventListener('focus', onFocus);
+      setTimeout(() => { if (!settled) { cleanup(); resolve(null); } }, 800);
+    }, { once: true });
+    input.click();
+  });
+}
+
+/* ==================== BACKGROUND PRESENCE CHECKS ==================== */
+// While an employee is clocked in (time_in set, no time_out) and has the
+// portal open, silently check their location every 15 minutes and log it.
+// This can only run while the browser tab / installed PWA is open — a
+// website cannot track location after the app is fully closed.
+const PRESENCE_CHECK_INTERVAL_MIN = 15;
+let presenceCheckTimer = null;
+
+function stopPresenceChecks() {
+  if (presenceCheckTimer) { clearInterval(presenceCheckTimer); presenceCheckTimer = null; }
+}
+
+function startPresenceChecks(emp, attendanceLogId) {
+  stopPresenceChecks();
+  if (S.workLat==null || S.workLng==null) return;
+  presenceCheckTimer = setInterval(async () => {
+    try {
+      const loc = await getCurrentLocation();
+      const dist = distanceMeters(loc.lat, loc.lng, S.workLat, S.workLng);
+      await sb.from('presence_checks').insert({
+        id:`PC-${Date.now()}`, emp_id:emp.id, emp_name:emp.full_name, log_date:todayStr(),
+        attendance_log_id:attendanceLogId, checked_at:new Date().toISOString(),
+        lat:loc.lat, lng:loc.lng, distance_m:Math.round(dist), within_radius: dist<=S.workRadius
+      });
+    } catch(e) { /* silent — user may have denied location or is offline; just skip this check */ }
+  }, PRESENCE_CHECK_INTERVAL_MIN*60*1000);
+}
+
+// Away time is approximated as (number of "outside radius" checks) × the
+// check interval — a light heuristic, not GPS-precise, but good enough to
+// flag employees who logged in then left for a long stretch.
+function computeAwayMinutes(checks) {
+  const awayCount = (checks||[]).filter(c=>!c.within_radius).length;
+  return awayCount * PRESENCE_CHECK_INTERVAL_MIN;
+}
 function fmtMoney(n) { return '₱' + (parseFloat(n)||0).toLocaleString('en-PH', {minimumFractionDigits:2, maximumFractionDigits:2}); }
 function pad(n) { return n.toString().padStart(2, '0'); }
 function badgeClass(s) { return {Active:'badge-active',Inactive:'badge-inactive','On Leave':'badge-leave',Pending:'badge-pending',Approved:'badge-approved',Rejected:'badge-rejected',Complete:'badge-complete',Missing:'badge-missing',Minor:'badge-minor',Major:'badge-major'}[s] || 'badge-inactive'; }
@@ -2732,21 +2797,27 @@ async function renderAttendance(content) {
 
   let logQ = sb.from('attendance_logs').select('*').order('log_date',{ascending:false}).order('time_in',{ascending:false});
   let otQ = sb.from('ot_requests').select('*').order('ot_date',{ascending:false});
-  if (S.attSearch) { logQ = logQ.ilike('emp_name', `%${S.attSearch}%`); otQ = otQ.ilike('emp_name', `%${S.attSearch}%`); }
-  if (S.attDateFilter) { logQ = logQ.eq('log_date', S.attDateFilter); otQ = otQ.eq('ot_date', S.attDateFilter); }
+  let pcQ = sb.from('presence_checks').select('*');
+  if (S.attSearch) { logQ = logQ.ilike('emp_name', `%${S.attSearch}%`); otQ = otQ.ilike('emp_name', `%${S.attSearch}%`); pcQ = pcQ.ilike('emp_name', `%${S.attSearch}%`); }
+  if (S.attDateFilter) { logQ = logQ.eq('log_date', S.attDateFilter); otQ = otQ.eq('ot_date', S.attDateFilter); pcQ = pcQ.eq('log_date', S.attDateFilter); }
 
-  const [{data:logs}, {data:ots}] = await Promise.all([logQ, otQ]);
+  const [{data:logs}, {data:ots}, {data:presenceChecks}] = await Promise.all([logQ, otQ, pcQ]);
   const logList = logs||[];
   const otList = ots||[];
+  const pcList = presenceChecks||[];
 
   // Merge attendance logs with OT requests by employee + date, so overtime
   // shows inline in the same row as the time in/out for that day.
   const rowMap = new Map();
-  logList.forEach(l => { rowMap.set(`${l.emp_id}|${l.log_date}`, { ...l, ot: null }); });
+  logList.forEach(l => {
+    const key = `${l.emp_id}|${l.log_date}`;
+    const checksForRow = pcList.filter(c=>c.emp_id===l.emp_id && c.log_date===l.log_date);
+    rowMap.set(key, { ...l, ot: null, checks: checksForRow });
+  });
   otList.forEach(o => {
     const key = `${o.emp_id}|${o.ot_date}`;
     if (rowMap.has(key)) { rowMap.get(key).ot = o; }
-    else { rowMap.set(key, { emp_id:o.emp_id, emp_name:o.emp_name, log_date:o.ot_date, time_in:null, time_out:null, time_in_distance_m:null, time_out_distance_m:null, ot:o }); }
+    else { rowMap.set(key, { emp_id:o.emp_id, emp_name:o.emp_name, log_date:o.ot_date, time_in:null, time_out:null, time_in_distance_m:null, time_out_distance_m:null, ot:o, checks:[] }); }
   });
   const list = Array.from(rowMap.values()).sort((a,b)=> (b.log_date||'').localeCompare(a.log_date||''));
 
@@ -2763,10 +2834,10 @@ async function renderAttendance(content) {
     </div>
     ${list.length===0?`<div class="empty-state"><h4>No attendance logs found</h4><p>Time-in records will appear here once employees start logging attendance.</p></div>`:`
     <div class="table-wrap"><table>
-      <thead><tr><th>Employee</th><th>Date</th><th>Time In</th><th>Time Out</th><th>Status</th><th>Hours Worked</th><th>Overtime</th><th>Location Check</th></tr></thead>
+      <thead><tr><th>Employee</th><th>Date</th><th>Time In</th><th>Time Out</th><th>Status</th><th>Hours Worked</th><th>Overtime</th><th>Selfie</th><th>Location Check</th></tr></thead>
       <tbody>${list.map(l=>`<tr>
         <td><strong>${l.emp_name}</strong><br><span class="mono" style="font-size:11px;color:var(--muted);">${l.emp_id}</span></td>
-        <td class="mono">${fmtDate(l.log_date)}</td>
+        <td class="mono">${fmtDate(l.log_date)}${l.is_wfh?` <span class="badge badge-inactive" style="font-size:9px;">🏠 WFH</span>`:''}</td>
         <td class="mono">${l.time_in?fmtTime12(l.time_in):'—'}</td>
         <td class="mono">${l.time_out?fmtTime12(l.time_out):'—'}</td>
         <td>${l.time_in?`<span class="badge ${l.time_out?'badge-approved':'badge-pending'}">${l.time_out?'Complete':'Incomplete'}</span>`:'—'}</td>
@@ -2786,15 +2857,54 @@ async function renderAttendance(content) {
               }
             </div>`}
         </td>
+        <td style="white-space:nowrap;">
+          ${l.time_in_photo?`<img src="${l.time_in_photo}" class="att-selfie-thumb" data-photo="${l.time_in_photo}" data-name="${l.emp_name} — Time In" style="width:32px;height:32px;border-radius:6px;object-fit:cover;cursor:pointer;border:1px solid var(--line-strong);margin-right:4px;">`:''}
+          ${l.time_out_photo?`<img src="${l.time_out_photo}" class="att-selfie-thumb" data-photo="${l.time_out_photo}" data-name="${l.emp_name} — Time Out" style="width:32px;height:32px;border-radius:6px;object-fit:cover;cursor:pointer;border:1px solid var(--line-strong);">`:''}
+          ${!l.time_in_photo && !l.time_out_photo?`<span style="font-size:11px;color:var(--muted);">—</span>`:''}
+        </td>
         <td style="font-size:11.5px;color:var(--muted);">
           ${l.time_in_distance_m!=null?`In: ${Math.round(l.time_in_distance_m)}m from office`:''}
           ${l.time_out_distance_m!=null?`<br>Out: ${Math.round(l.time_out_distance_m)}m from office`:''}
+          ${(() => {
+            const awayMin = computeAwayMinutes(l.checks);
+            if (!l.checks || l.checks.length===0) return '';
+            const badgeColor = awayMin>=120 ? 'var(--rose)' : awayMin>0 ? 'var(--gold)' : 'var(--teal)';
+            const badgeBg = awayMin>=120 ? 'var(--rose-bg)' : awayMin>0 ? 'var(--gold-bg)' : 'var(--teal-bg)';
+            const hrs = Math.floor(awayMin/60), mins = awayMin%60;
+            const label = awayMin>0 ? `⚠ Away ~${hrs>0?hrs+'h ':''}${mins}m` : '✓ Stayed in range';
+            return `<div style="margin-top:4px;">
+              <button class="btn btn-outline btn-sm view-presence-btn" data-empid="${l.emp_id}" data-date="${l.log_date}" style="font-size:10px;padding:2px 7px;background:${badgeBg};color:${badgeColor};border-color:${badgeColor};">${label} · ${l.checks.length} check(s)</button>
+            </div>`;
+          })()}
         </td>
       </tr>`).join('')}</tbody>
     </table></div>`}`;
 
   let attSearchTimer;
   document.getElementById('attSearch').addEventListener('input',e=>{S.attSearch=e.target.value; clearTimeout(attSearchTimer); attSearchTimer=setTimeout(()=>renderAttendance(content),300);});
+  content.querySelectorAll('.att-selfie-thumb').forEach(img=>img.addEventListener('click',()=>openPhotoLightbox(img.dataset.photo,img.dataset.name)));
+  content.querySelectorAll('.view-presence-btn').forEach(btn=>btn.addEventListener('click', async()=>{
+    const {data:checks} = await sb.from('presence_checks').select('*').eq('emp_id',btn.dataset.empid).eq('log_date',btn.dataset.date).order('checked_at',{ascending:true});
+    const list = checks||[];
+    const awayMin = computeAwayMinutes(list);
+    const hrs = Math.floor(awayMin/60), mins = awayMin%60;
+    openModal(`
+      <div class="modal-tab-label">LOCATION HISTORY</div>
+      <div class="modal-head"><div><h3>Location Checks</h3><div class="sub">${fmtDate(btn.dataset.date)} · checked every ${PRESENCE_CHECK_INTERVAL_MIN} min while clocked in</div></div><button class="modal-close" id="closeModalBtn">&times;</button></div>
+      <div class="modal-body">
+        ${awayMin>0?`<div class="note-banner" style="background:var(--rose-bg);border-color:var(--rose-border);color:var(--rose);">⚠️ Estimated time away from office: <strong>${hrs>0?hrs+'h ':''}${mins}m</strong> (based on ${list.filter(c=>!c.within_radius).length} check(s) outside the ${S.workRadius}m radius)</div>`:`<div class="success-banner">✅ Stayed within office radius for all checks that day.</div>`}
+        ${list.length===0?`<p style="color:var(--muted);font-size:13px;">No background location checks were recorded for this day — the employee may not have kept the portal open while clocked in.</p>`:`
+        <div class="table-wrap"><table><thead><tr><th>Time</th><th>Distance from Office</th><th>Status</th></tr></thead>
+        <tbody>${list.map(c=>`<tr>
+          <td class="mono">${fmtTime12(c.checked_at)}</td>
+          <td class="mono">${c.distance_m}m</td>
+          <td><span class="badge ${c.within_radius?'badge-approved':'badge-rejected'}">${c.within_radius?'In range':'Away'}</span></td>
+        </tr>`).join('')}</tbody></table></div>`}
+      </div>
+      <div class="modal-foot"><button class="btn btn-primary" id="closePresenceBtn">Close</button></div>`);
+    document.getElementById('closeModalBtn').addEventListener('click',closeModal);
+    document.getElementById('closePresenceBtn').addEventListener('click',closeModal);
+  }));
   document.getElementById('attDateFilter').addEventListener('change',e=>{S.attDateFilter=e.target.value; renderAttendance(content);});
 
   content.querySelectorAll('.hr-approve-ot-btn').forEach(btn=>btn.addEventListener('click',async()=>{
@@ -4771,7 +4881,7 @@ async function renderEmpShell() {
   empBackdropEl.addEventListener('click', closeEmpSidebar);
   shell.querySelectorAll('.nav-tab').forEach(btn=>btn.addEventListener('click',()=>{S.empPage=btn.dataset.page;closeEmpSidebar();renderEmpShell();}));
   document.getElementById('empLogout').addEventListener('click',()=>{
-    S.employee=null; S._notifShown=false; clearSession(); stopRealtime(); S.view='landing'; render();
+    S.employee=null; S._notifShown=false; clearSession(); stopRealtime(); stopPresenceChecks(); S.view='landing'; render();
   });
   const content=document.getElementById('empContent');
   switch(S.empPage){
@@ -4870,11 +4980,27 @@ async function renderEmpAttendance(content, emp) {
   const pendingOTList = pendingOT||[];
   const hasWorkLoc = S.workLat!=null && S.workLng!=null;
 
+  // Start/stop silent background presence checks based on clock-in state
+  // (skip for WFH days — the office radius doesn't apply to them)
+  if (todayLog?.time_in && !todayLog?.time_out && !todayLog?.is_wfh) {
+    startPresenceChecks(emp, todayLog.id);
+  } else {
+    stopPresenceChecks();
+  }
+
   content.innerHTML = `
     <div class="page-header"><p class="desc">Time in and time out — verified by your current location.</p></div>
     ${!hasWorkLoc ? `<div class="note-banner">⚠️ Work location has not been configured yet by HR. Please contact HR before timing in.</div>` : ''}
     <div class="record-card" style="padding:22px 24px;max-width:520px;margin-bottom:24px;">
-      <div class="record-tab">${fmtDate(today)}</div>
+      <div class="record-tab">${fmtDate(today)}${todayLog?.is_wfh?' · 🏠 WFH':''}</div>
+      ${(!todayLog || !todayLog.time_in) ? `
+      <div class="field" style="margin-bottom:12px;">
+        <label>Where are you working today?</label>
+        <select id="att_location_type">
+          <option value="Office">📍 At the Office</option>
+          <option value="WFH">🏠 Work From Home</option>
+        </select>
+      </div>` : ''}
       <div style="display:flex;align-items:center;justify-content:space-between;gap:16px;flex-wrap:wrap;">
         <div>
           <div class="detail-row" style="border:none;padding:6px 0;"><span class="k">Time In</span><span class="v mono">${todayLog?.time_in?fmtTime12(todayLog.time_in):'— not yet —'}</span></div>
@@ -4882,9 +5008,9 @@ async function renderEmpAttendance(content, emp) {
         </div>
         <div>
           ${!todayLog || !todayLog.time_in
-            ? `<button class="btn btn-primary" id="timeInBtn" ${!hasWorkLoc?'disabled':''}>📍 Time In</button>`
+            ? `<button class="btn btn-primary" id="timeInBtn">📍 Time In</button>`
             : !todayLog.time_out
-            ? `<button class="btn btn-primary" id="timeOutBtn" ${!hasWorkLoc?'disabled':''}>📍 Time Out</button>`
+            ? `<button class="btn btn-primary" id="timeOutBtn">📍 Time Out</button>`
             : `<span class="badge badge-approved">✓ Complete for today</span>`
           }
         </div>
@@ -4932,7 +5058,7 @@ async function renderEmpAttendance(content, emp) {
     <div class="table-wrap"><table>
       <thead><tr><th>Date</th><th>Time In</th><th>Time Out</th><th>Status</th></tr></thead>
       <tbody>${list.map(l=>`<tr>
-        <td class="mono">${fmtDate(l.log_date)}</td>
+        <td class="mono">${fmtDate(l.log_date)}${l.is_wfh?` <span class="badge badge-inactive" style="font-size:9px;">🏠 WFH</span>`:''}</td>
         <td class="mono">${fmtTime12(l.time_in)}</td>
         <td class="mono">${l.time_out?fmtTime12(l.time_out):'—'}</td>
         <td><span class="badge ${l.time_out?'badge-approved':'badge-pending'}">${l.time_out?'Complete':'Incomplete'}</span></td>
@@ -4941,23 +5067,36 @@ async function renderEmpAttendance(content, emp) {
 
   document.getElementById('timeInBtn')?.addEventListener('click', async()=>{
     const btn=document.getElementById('timeInBtn'); const statusEl=document.getElementById('att_status');
+    const locationType = document.getElementById('att_location_type')?.value || 'Office';
+    const isWFH = locationType === 'WFH';
+    if(!isWFH && !hasWorkLoc){ statusEl.innerHTML='⚠️ Work location has not been configured yet by HR. Please contact HR, or select Work From Home if that applies to you today.'; statusEl.style.color='var(--rose)'; return; }
     btn.disabled=true; btn.innerHTML='<span class="spinner"></span> Getting location…';
     try{
       const loc = await getCurrentLocation();
-      const dist = distanceMeters(loc.lat, loc.lng, S.workLat, S.workLng);
-      if(dist > S.workRadius){
-        statusEl.innerHTML = `⚠️ You're ${Math.round(dist)}m away from the office. You must be within ${S.workRadius}m to time in.`;
+      const dist = isWFH ? null : distanceMeters(loc.lat, loc.lng, S.workLat, S.workLng);
+      if(!isWFH && dist > S.workRadius){
+        statusEl.innerHTML = `⚠️ You're ${Math.round(dist)}m away from the office. You must be within ${S.workRadius}m to time in, or select "Work From Home" above if that applies today.`;
         statusEl.style.color = 'var(--rose)';
         btn.disabled=false; btn.innerHTML='📍 Time In';
         return;
       }
+      btn.innerHTML='<span class="spinner"></span> Opening camera…';
+      const selfie = await captureSelfie();
+      if(!selfie){
+        statusEl.innerHTML = '⚠️ A live selfie is required to time in. Please try again and take the photo.';
+        statusEl.style.color = 'var(--rose)';
+        btn.disabled=false; btn.innerHTML='📍 Time In';
+        return;
+      }
+      btn.innerHTML='<span class="spinner"></span> Saving…';
       const {error} = await sb.from('attendance_logs').insert({
         id:`ATT-${Date.now()}`, emp_id:emp.id, emp_name:emp.full_name, log_date:today,
         time_in:new Date().toISOString(), time_in_lat:loc.lat, time_in_lng:loc.lng,
-        time_in_accuracy_m:Math.round(loc.accuracy), time_in_distance_m:Math.round(dist)
+        time_in_accuracy_m:Math.round(loc.accuracy), time_in_distance_m:dist!=null?Math.round(dist):null,
+        time_in_photo:selfie, is_wfh:isWFH
       });
       if(error){ toast('Error: '+error.message); btn.disabled=false; btn.innerHTML='📍 Time In'; return; }
-      toast('Timed in successfully!'); renderEmpAttendance(content, emp);
+      toast(isWFH?'Timed in (Work From Home)!':'Timed in successfully!'); renderEmpAttendance(content, emp);
     }catch(err){
       statusEl.innerHTML = '⚠️ '+err.message; statusEl.style.color='var(--rose)';
       btn.disabled=false; btn.innerHTML='📍 Time In';
@@ -4966,19 +5105,31 @@ async function renderEmpAttendance(content, emp) {
 
   document.getElementById('timeOutBtn')?.addEventListener('click', async()=>{
     const btn=document.getElementById('timeOutBtn'); const statusEl=document.getElementById('att_status');
+    const isWFH = !!todayLog?.is_wfh;
+    if(!isWFH && !hasWorkLoc){ statusEl.innerHTML='⚠️ Work location has not been configured yet by HR.'; statusEl.style.color='var(--rose)'; return; }
     btn.disabled=true; btn.innerHTML='<span class="spinner"></span> Getting location…';
     try{
       const loc = await getCurrentLocation();
-      const dist = distanceMeters(loc.lat, loc.lng, S.workLat, S.workLng);
-      if(dist > S.workRadius){
+      const dist = isWFH ? null : distanceMeters(loc.lat, loc.lng, S.workLat, S.workLng);
+      if(!isWFH && dist > S.workRadius){
         statusEl.innerHTML = `⚠️ You're ${Math.round(dist)}m away from the office. You must be within ${S.workRadius}m to time out.`;
         statusEl.style.color = 'var(--rose)';
         btn.disabled=false; btn.innerHTML='📍 Time Out';
         return;
       }
+      btn.innerHTML='<span class="spinner"></span> Opening camera…';
+      const selfie = await captureSelfie();
+      if(!selfie){
+        statusEl.innerHTML = '⚠️ A live selfie is required to time out. Please try again and take the photo.';
+        statusEl.style.color = 'var(--rose)';
+        btn.disabled=false; btn.innerHTML='📍 Time Out';
+        return;
+      }
+      btn.innerHTML='<span class="spinner"></span> Saving…';
       const {error} = await sb.from('attendance_logs').update({
         time_out:new Date().toISOString(), time_out_lat:loc.lat, time_out_lng:loc.lng,
-        time_out_accuracy_m:Math.round(loc.accuracy), time_out_distance_m:Math.round(dist)
+        time_out_accuracy_m:Math.round(loc.accuracy), time_out_distance_m:dist!=null?Math.round(dist):null,
+        time_out_photo:selfie
       }).eq('id', todayLog.id);
       if(error){ toast('Error: '+error.message); btn.disabled=false; btn.innerHTML='📍 Time Out'; return; }
       toast('Timed out successfully!'); renderEmpAttendance(content, emp);

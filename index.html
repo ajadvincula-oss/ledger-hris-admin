@@ -1412,29 +1412,84 @@ function getCurrentLocation() {
 // to time in/out — this makes GPS spoofing far less useful, since a photo of
 // the actual person at that moment is also required.
 function captureSelfie() {
-  return new Promise((resolve) => {
-    const input = document.createElement('input');
-    input.type = 'file';
-    input.accept = 'image/*';
-    input.capture = 'user';
-    input.style.display = 'none';
-    document.body.appendChild(input);
+  return new Promise(async (resolve) => {
+    if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
+      toast('Camera access is not supported on this browser. Please use an updated Chrome or Safari.');
+      resolve(null);
+      return;
+    }
+    let stream = null;
+    try {
+      stream = await navigator.mediaDevices.getUserMedia({ video: { facingMode: 'user' }, audio: false });
+    } catch (err) {
+      toast('Camera permission is required to time in/out. Please allow camera access and try again.');
+      resolve(null);
+      return;
+    }
+
+    openModal(`
+      <div class="modal-tab-label">CAMERA VERIFICATION</div>
+      <div class="modal-head">
+        <div><h3>Take a Live Selfie</h3><div class="sub">Required to verify it's really you — uploads from gallery are not allowed</div></div>
+        <button class="modal-close" id="selfieCloseBtn">&times;</button>
+      </div>
+      <div class="modal-body" style="text-align:center;">
+        <video id="selfieVideo" autoplay playsinline muted style="width:100%;max-width:360px;border-radius:12px;background:#0A2540;transform:scaleX(-1);"></video>
+        <canvas id="selfieCanvas" style="display:none;"></canvas>
+        <img id="selfiePreview" style="display:none;width:100%;max-width:360px;border-radius:12px;transform:scaleX(-1);object-fit:cover;">
+      </div>
+      <div class="modal-foot">
+        <button class="btn btn-outline" id="selfieCancelBtn">Cancel</button>
+        <button class="btn btn-primary" id="selfieCaptureBtn">📸 Capture</button>
+        <button class="btn btn-outline" id="selfieRetakeBtn" style="display:none;">↺ Retake</button>
+        <button class="btn btn-primary" id="selfieUseBtn" style="display:none;">✓ Use This Photo</button>
+      </div>`);
+
+    const video = document.getElementById('selfieVideo');
+    video.srcObject = stream;
+
+    let capturedData = null;
     let settled = false;
-    const cleanup = () => { if (input.parentNode) document.body.removeChild(input); };
-    input.addEventListener('change', () => {
-      const file = input.files[0];
-      if (!file) { settled = true; cleanup(); resolve(null); return; }
-      const reader = new FileReader();
-      reader.onload = e => { settled = true; cleanup(); resolve(e.target.result); };
-      reader.onerror = () => { settled = true; cleanup(); resolve(null); };
-      reader.readAsDataURL(file);
+    const overlay = document.getElementById('modalOverlay');
+    const stopStream = () => { stream.getTracks().forEach(t => t.stop()); };
+    const backdropHandler = (e) => { if (e.target === overlay) finish(null); };
+    overlay.addEventListener('click', backdropHandler);
+
+    function finish(result) {
+      if (settled) return;
+      settled = true;
+      stopStream();
+      overlay.removeEventListener('click', backdropHandler);
+      closeModal();
+      resolve(result);
+    }
+
+    document.getElementById('selfieCloseBtn').addEventListener('click', () => finish(null));
+    document.getElementById('selfieCancelBtn').addEventListener('click', () => finish(null));
+    document.getElementById('selfieCaptureBtn').addEventListener('click', () => {
+      const canvas = document.getElementById('selfieCanvas');
+      canvas.width = video.videoWidth || 480;
+      canvas.height = video.videoHeight || 360;
+      const ctx = canvas.getContext('2d');
+      ctx.translate(canvas.width, 0); ctx.scale(-1, 1); // mirror to match the preview
+      ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
+      capturedData = canvas.toDataURL('image/jpeg', 0.85);
+      document.getElementById('selfiePreview').src = capturedData;
+      video.style.display = 'none';
+      document.getElementById('selfiePreview').style.display = 'block';
+      document.getElementById('selfieCaptureBtn').style.display = 'none';
+      document.getElementById('selfieRetakeBtn').style.display = 'inline-flex';
+      document.getElementById('selfieUseBtn').style.display = 'inline-flex';
     });
-    // Some browsers don't fire 'change' reliably on cancel — fall back via window focus.
-    window.addEventListener('focus', function onFocus() {
-      window.removeEventListener('focus', onFocus);
-      setTimeout(() => { if (!settled) { cleanup(); resolve(null); } }, 800);
-    }, { once: true });
-    input.click();
+    document.getElementById('selfieRetakeBtn').addEventListener('click', () => {
+      capturedData = null;
+      video.style.display = 'block';
+      document.getElementById('selfiePreview').style.display = 'none';
+      document.getElementById('selfieCaptureBtn').style.display = 'inline-flex';
+      document.getElementById('selfieRetakeBtn').style.display = 'none';
+      document.getElementById('selfieUseBtn').style.display = 'none';
+    });
+    document.getElementById('selfieUseBtn').addEventListener('click', () => finish(capturedData));
   });
 }
 

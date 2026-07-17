@@ -803,7 +803,7 @@ tbody tr:hover{background:var(--cream-dim);}
   flex-shrink:0;
   display:flex;
   flex-direction:column;
-  position:sticky;top:0;height:100vh;
+  position:sticky;top:0;height:100vh;height:100dvh;
   border-right:1px solid rgba(255,255,255,0.06);
   z-index:50;
   transition:transform 0.3s cubic-bezier(.4,0,.2,1);
@@ -819,6 +819,9 @@ tbody tr:hover{background:var(--cream-dim);}
 @media (max-width:768px){
   .emp-sidebar{
     position:fixed;left:0;top:0;
+    height:100vh;height:100dvh;
+    max-height:100vh;max-height:100dvh;
+    overflow-y:auto;
     transform:translateX(-100%);
     box-shadow:6px 0 30px rgba(0,0,0,0.25);
   }
@@ -1783,7 +1786,7 @@ async function renderDashboard(content) {
   const todayISOStr = today.toISOString().slice(0,10);
   const sevenDaysAgoStr = new Date(Date.now()-6*24*60*60*1000).toISOString().slice(0,10);
 
-  const [empRes, leaveRes, evalRes, violRes, allEvalRes, attRes, otRes, att7Res, leaveWeekRes] = await Promise.all([
+  const [empRes, leaveRes, evalRes, violRes, allEvalRes, attRes, otRes, att7Res, leaveWeekRes, regHistRes] = await Promise.all([
     sb.from('employees').select('*').eq('status','Active'),
     sb.from('leave_requests').select('*').or("status.in.(Pending Supervisor,Pending HR),cancellation_status.in.(Pending Approver,Pending HR)").order('filed_on',{ascending:false}),
     sb.from('evaluations').select('emp_id,rating'),
@@ -1792,11 +1795,13 @@ async function renderDashboard(content) {
     sb.from('attendance_logs').select('emp_id').eq('log_date', todayISOStr),
     sb.from('ot_requests').select('id,emp_name,hours,ot_date,status').in('status',['Pending Supervisor','Pending HR']),
     sb.from('attendance_logs').select('emp_id,log_date').gte('log_date', sevenDaysAgoStr),
-    sb.from('leave_requests').select('emp_id,start_date,end_date').eq('status','Approved').lte('start_date', todayISOStr).or(`end_date.gte.${sevenDaysAgoStr},end_date.is.null`)
+    sb.from('leave_requests').select('emp_id,start_date,end_date').eq('status','Approved').lte('start_date', todayISOStr).or(`end_date.gte.${sevenDaysAgoStr},end_date.is.null`),
+    sb.from('employment_history').select('emp_id').eq('movement_type','Regularization')
   ]);
 
   const emps=empRes.data||[], pendingLeaves=leaveRes.data||[], evals=evalRes.data||[], viols=violRes.data||[], allEvals=allEvalRes.data||[];
   const approvedLeavesWeek = leaveWeekRes.data||[];
+  const alreadyRegularizedIds = new Set((regHistRes.data||[]).map(r=>r.emp_id));
   const isOnLeaveOnDate = (empId, dateStr) => approvedLeavesWeek.some(l => l.emp_id===empId && l.start_date<=dateStr && (l.end_date||l.start_date)>=dateStr);
   const loggedTodayIds = new Set((attRes.data||[]).map(l=>l.emp_id));
   const onLeaveTodayEmps = emps.filter(e=>!loggedTodayIds.has(e.id) && isOnLeaveOnDate(e.id, todayISOStr));
@@ -1811,9 +1816,10 @@ async function renderDashboard(content) {
   // Alert computations
   const evaluatedEmpIds = new Set(allEvals.map(e=>e.emp_id));
 
-  // For regularization: hired ~6 months ago and still probationary (no regularization in history)
+  // For regularization: hired ~6 months ago, still not marked Regularized in Employment History
   const forRegularization = emps.filter(e=>{
     if(!e.hire_date) return false;
+    if(alreadyRegularizedIds.has(e.id)) return false;
     const hireDate = new Date(e.hire_date);
     const monthsEmployed = (today - hireDate) / (1000*60*60*24*30);
     return monthsEmployed >= 5.5 && monthsEmployed <= 7;
@@ -1939,7 +1945,6 @@ async function renderDashboard(content) {
             <strong>${e.full_name}</strong>
             <span>${e.department||'—'} · ${months} months employed</span>
           </div>
-          ${e.email ? `<a class="btn btn-outline btn-sm" href="mailto:${encodeURIComponent(e.email)}?subject=Regularization Notice — ${encodeURIComponent(e.full_name)}&body=${encodeURIComponent(`Dear ${e.full_name},\n\nWe are pleased to inform you that you are approaching your regularization date.\n\nPlease coordinate with HR for the necessary requirements and documentation.\n\nThank you.`)}" style="font-size:11px;white-space:nowrap;">📧 Notify</a>` : ''}
         </div>`;
       },
       action: `onclick="document.querySelector('.nav-tab[data-page=emphistory]').click()"`,
@@ -4973,6 +4978,8 @@ async function renderEmpOverview(content, emp) {
       <div class="detail-row"><span class="k">Email</span><span class="v">${emp.email||'—'}</span></div>
       <div class="detail-row"><span class="k">Phone</span><span class="v mono">${emp.phone||'—'}</span></div>
       <div class="detail-row"><span class="k">Address</span><span class="v" style="max-width:280px;text-align:right;">${emp.address||'—'}</span></div>
+      <div class="detail-row"><span class="k">Birth Date</span><span class="v mono">${fmtDate(emp.birth_date)}</span></div>
+      <div class="detail-row"><span class="k">Gender</span><span class="v">${emp.gender||'—'}</span></div>
       <div class="detail-row"><span class="k">Hire Date</span><span class="v mono">${fmtDate(emp.hire_date)}</span></div>
       <div class="detail-row"><span class="k">Tenure</span><span class="v">${tenure} years</span></div>
       <div class="detail-row"><span class="k">Civil Status</span><span class="v">${emp.civil_status||'—'}</span></div>
